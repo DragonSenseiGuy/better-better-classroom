@@ -163,9 +163,7 @@ async function main() {
 			try {
 				const tokens = await tokensFor(a);
 				const courses = await fetchCourseList(jar, a, tokens);
-				console.log(
-					JSON.stringify({ authuser: a, email: tokens.email, courses: courses.length })
-				);
+				console.log(JSON.stringify({ authuser: a, email: tokens.email, courses: courses.length }));
 			} catch (err) {
 				console.log(JSON.stringify({ authuser: a, error: String(err).slice(0, 120) }));
 				if (String(err).includes('Redirect')) break;
