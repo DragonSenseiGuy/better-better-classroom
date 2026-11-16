@@ -81,23 +81,46 @@ const item = (id: string, courseId: string, text: string, html?: string) => [
 	]
 ];
 
-const assignment = (id: string, courseId: string, text: string, html: string) => [
-	2,
-	[
-		[
-			[id, [courseId]],
-			1784283111869,
-			null,
-			null,
-			['638776461164'],
-			'Title',
-			null,
-			null,
-			2,
-			[[null, null, null, null, null, null, ['edu.rt', text, null, null, [null, html]]]]
-		]
-	]
-];
+const assignment = (
+	id: string,
+	courseId: string,
+	text: string,
+	html: string,
+	extra: { schedule?: unknown[]; folder?: unknown[]; topicId?: string } = {}
+) => {
+	const postItem: unknown[] = [
+		[id, [courseId]],
+		1784283111869,
+		null,
+		null,
+		['638776461164'],
+		'Title',
+		null,
+		null,
+		2,
+		html ? [[null, null, null, null, null, null, ['edu.rt', text, null, null, [null, html]]]] : null
+	];
+	if (extra.topicId) postItem[14] = [[extra.topicId, [courseId]]];
+	return [2, [postItem, extra.schedule ?? null, extra.folder ?? null]];
+};
+
+// Materials arrive as wrapper-7 posts: titled PostItem five slots deep, no
+// schedule or folder nodes, and usually no rich-text body.
+const material = (id: string, courseId: string, topicId?: string) => {
+	const postItem: unknown[] = [
+		[id, [courseId]],
+		1789395973678,
+		null,
+		null,
+		['638776461164'],
+		'Material title',
+		null,
+		null,
+		2
+	];
+	if (topicId) postItem[14] = [[topicId, [courseId]]];
+	return [7, null, null, null, null, [postItem]];
+};
 
 const envelope = (payload: unknown) => {
 	const inner = JSON.stringify(payload);
@@ -170,6 +193,84 @@ test('empty stream', () => {
 		token: undefined,
 		items: []
 	});
+});
+
+test('materials are wrapper-7 posts with titles and no body', () => {
+	expect(
+		parseStreamResponse(envelope(['hrsi.qr', [false], [material('7', '9', 'topic1')]])).items
+	).toEqual([
+		{
+			id: '7',
+			courseId: '9',
+			text: '',
+			html: undefined,
+			creatorId: '638776461164',
+			kind: 'material',
+			title: 'Material title',
+			createdAt: 1789395973678,
+			topicId: 'topic1'
+		}
+	]);
+});
+
+test('coursework without a rich-text body is kept with empty text', () => {
+	expect(
+		parseStreamResponse(envelope(['hrsi.qr', [false], [assignment('4', '9', '', '')]])).items
+	).toEqual([
+		{
+			id: '4',
+			courseId: '9',
+			text: '',
+			html: undefined,
+			creatorId: '638776461164',
+			kind: 'courseWork',
+			title: 'Title',
+			createdAt: 1784283111869
+		}
+	]);
+});
+
+test('coursework schedule, folder and topic come from the entry body', () => {
+	const due = 1794585540000;
+	const assigned = 1784283111869;
+	expect(
+		parseStreamResponse(
+			envelope([
+				'hrsi.qr',
+				[false],
+				[
+					assignment('5', '9', 'Work', '<div>Work</div>', {
+						schedule: [due, assigned, false, 5],
+						folder: ['opaque', null, 'https://drive.google.com/drive/folders/abc'],
+						topicId: 'topic2'
+					})
+				]
+			])
+		).items
+	).toEqual([
+		{
+			id: '5',
+			courseId: '9',
+			text: 'Work',
+			html: '<div>Work</div>',
+			creatorId: '638776461164',
+			kind: 'courseWork',
+			title: 'Title',
+			createdAt: assigned,
+			dueAt: due,
+			maxPoints: 5,
+			topicId: 'topic2',
+			driveFolderUrl: 'https://drive.google.com/drive/folders/abc'
+		}
+	]);
+});
+
+test('contentless entries without title or body are skipped', () => {
+	expect(
+		parseStreamResponse(
+			envelope(['hrsi.qr', [false], [[7, null, null, null, null, [[['8', ['9']]]]]]])
+		).items
+	).toEqual([]);
 });
 
 test('rpc error surfaces', () => {
@@ -265,21 +366,25 @@ test('array in the title slot is not mistaken for a title', () => {
 
 test('finds client-side hops out of the home shell page', () => {
 	expect(findHomeRedirect('<html><body>courses here</body></html>')).toBeNull();
-	expect(
-		findHomeRedirect('<meta http-equiv="refresh" content="0;url=/u/0/h/st">')
-	).toBe('/u/0/h/st');
+	expect(findHomeRedirect('<meta http-equiv="refresh" content="0;url=/u/0/h/st">')).toBe(
+		'/u/0/h/st'
+	);
 	expect(findHomeRedirect('<script>location.replace("/u/0/h/st")</script>')).toBe('/u/0/h/st');
 	expect(findHomeRedirect('<script>window.location="/u/2/h/st?hl=en"</script>')).toBe(
 		'/u/2/h/st?hl=en'
 	);
-	expect(findHomeRedirect('<script>AF_initDataCallback("redirectUrl":"\\/u\\/0\\/h\\/st")</script>')).toBe(
-		'/u/0/h/st'
-	);
+	expect(
+		findHomeRedirect('<script>AF_initDataCallback("redirectUrl":"\\/u\\/0\\/h\\/st")</script>')
+	).toBe('/u/0/h/st');
 });
 
 test('ignores off-origin and off-classroom redirect targets', () => {
-	expect(findHomeRedirect('<script>location.replace("https://accounts.google.com/x")</script>')).toBeNull();
-	expect(findHomeRedirect('<script>location.replace("https://evil.com/u/0/h")</script>')).toBeNull();
+	expect(
+		findHomeRedirect('<script>location.replace("https://accounts.google.com/x")</script>')
+	).toBeNull();
+	expect(
+		findHomeRedirect('<script>location.replace("https://evil.com/u/0/h")</script>')
+	).toBeNull();
 	expect(findHomeRedirect('<script>location.replace("/u/0/r/xyz")</script>')).toBeNull();
 });
 
@@ -288,17 +393,16 @@ test('accepts spaced id/name pairs', () => {
 		`<a href="/c/${b64('123456789012')}">Physics</a>` +
 		`["888888888888" , "Spaced Out"]` +
 		`[ "777777777777" , "Extra Spaces" ]`;
-	expect(parseCoursesHtml(html).map((c) => c.name).sort()).toEqual([
-		'Extra Spaces',
-		'Physics',
-		'Spaced Out'
-	]);
+	expect(
+		parseCoursesHtml(html)
+			.map((c) => c.name)
+			.sort()
+	).toEqual(['Extra Spaces', 'Physics', 'Spaced Out']);
 });
 
 test('describeHomeHtml counts signals without leaking page content', () => {
 	const b64 = Buffer.from('123456789012').toString('base64');
-	const html =
-		`<a href="/c/${b64}">Bio</a>["123456789012","Bio"]AF_initDataCallbackAF_initDataCallback`;
+	const html = `<a href="/c/${b64}">Bio</a>["123456789012","Bio"]AF_initDataCallbackAF_initDataCallback`;
 	const diag = describeHomeHtml(html);
 	expect(diag.bytes).toBe(html.length);
 	expect(diag.courseLinks).toBe(1);

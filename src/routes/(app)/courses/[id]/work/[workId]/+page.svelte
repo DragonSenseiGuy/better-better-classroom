@@ -39,8 +39,9 @@
 	const privatePlaceholder = $derived(
 		teacherName ? `Add comment to ${teacherName}…` : 'Add a private comment for your teacher…'
 	);
-	// Session-only sync cannot see due dates, points, topics, materials or
-	// submissions: render those as unknown instead of asserting absence.
+	// Session-only sync now maps due dates, points and topic ids from the
+	// stream; it still cannot see grades, per-item attachments or topic
+	// names. Render those as unknown instead of asserting absence.
 	const limited = $derived(page.data.snapshot.source !== 'apps-script');
 	const dueText = $derived(
 		!w || w.dueAt === undefined
@@ -54,12 +55,12 @@
 			? [
 					{
 						label: 'Due',
-						value: limited ? '–' : dueText,
+						value: dueText,
 						hint: w.dueAt !== undefined ? formatDue(w.dueAt, w.hasDueTime) : undefined
 					},
 					{
 						label: 'Points',
-						value: w.maxPoints ? String(w.maxPoints) : limited ? '–' : 'Ungraded'
+						value: w.maxPoints ? String(w.maxPoints) : 'Ungraded'
 					},
 					{ label: 'Topic', value: topicQuery.data?.name ?? '–' },
 					{ label: 'Posted', value: formatRelative(w.createdAt) }
@@ -96,8 +97,8 @@
 			class="mt-6 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground"
 		>
 			<span
-				>Session sync can't see due dates, points, attachments or grades. Connect the Apps
-				Script source for the full picture.</span
+				>Session sync can't see grades, per-item attachments or topic names. Connect the Apps Script
+				source for the full picture.</span
 			>
 			<Button variant="outline" size="sm" href="/setup">Connect Apps Script</Button>
 		</div>
@@ -127,7 +128,8 @@
 			</div>
 			{#if sub}
 				<p class="mt-1 text-sm text-muted-foreground">
-					{#if sub.late}late · {/if}updated {formatRelative(sub.updatedAt)}
+					{#if sub.late}late ·
+					{/if}updated {formatRelative(sub.updatedAt)}
 				</p>
 				{#if w.assignedGrade !== undefined || w.draftGrade !== undefined}
 					<div class="mt-4">
@@ -148,8 +150,8 @@
 				{/if}
 			{:else}
 				<p class="mt-1 text-sm text-muted-foreground">
-					No submission record yet. Files and comments below load live from Classroom when a
-					session is connected.
+					No submission record yet. Files and comments below load live from Classroom when a session
+					is connected.
 				</p>
 			{/if}
 			<Separator class="my-4" />
@@ -158,7 +160,7 @@
 				<SubmissionActions work={w} submission={sub} />
 			{/if}
 			<Separator class="my-6" />
-			<PrivateComments work={w} teacherName={teacherName} />
+			<PrivateComments work={w} {teacherName} />
 		</aside>
 	</div>
 {/if}
