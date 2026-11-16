@@ -14,6 +14,7 @@
 	import { editCourse } from '#lib/course-editor.svelte.ts';
 	import HouseIcon from '@lucide/svelte/icons/house';
 	import ListChecksIcon from '@lucide/svelte/icons/list-checks';
+	import CalendarDaysIcon from '@lucide/svelte/icons/calendar-days';
 	import InboxIcon from '@lucide/svelte/icons/inbox';
 	import SearchIcon from '@lucide/svelte/icons/search';
 	import SettingsIcon from '@lucide/svelte/icons/settings';
@@ -51,7 +52,8 @@
 	const nav = $derived([
 		{ href: '/', label: 'Home', icon: HouseIcon, count: 0 },
 		{ href: '/inbox', label: 'Inbox', icon: InboxIcon, count: inboxCount },
-		{ href: '/todo', label: 'To-do', icon: ListChecksIcon, count: todoCount }
+		{ href: '/todo', label: 'To-do', icon: ListChecksIcon, count: todoCount },
+		{ href: '/calendar', label: 'Calendar', icon: CalendarDaysIcon, count: 0 }
 	]);
 	const isActive = (href: string) =>
 		href === '/' ? page.url.pathname === '/' : page.url.pathname.startsWith(href);

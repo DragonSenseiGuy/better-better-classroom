@@ -45,6 +45,7 @@
 	createHotkeySequence(['G', 'H'], () => goto('/'));
 	createHotkeySequence(['G', 'I'], () => goto('/inbox'));
 	createHotkeySequence(['G', 'T'], () => goto('/todo'));
+	createHotkeySequence(['G', 'C'], () => goto('/calendar'));
 	createHotkeySequence(['G', 'S'], () => goto('/settings'));
 
 	const allCoursesQuery = useLiveQuery({
