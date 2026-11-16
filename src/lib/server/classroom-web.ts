@@ -5,7 +5,8 @@ import {
 	PostItem,
 	ProfileEntry,
 	ProfilesEnvelope,
-	StreamEnvelope
+	StreamEnvelope,
+	WorkBody
 } from './classroom/schema';
 
 const ORIGIN = 'https://classroom.google.com';
@@ -34,6 +35,14 @@ export type StreamItem = {
 	 * not on incremental `since` filters.
 	 */
 	createdAt?: number;
+	/** Due instant in ms (coursework only); undefined when the work has no due date. */
+	dueAt?: number;
+	/** Maximum points (coursework only); undefined on ungraded work. */
+	maxPoints?: number;
+	/** Topic id from the PostItem topic reference (coursework and materials). */
+	topicId?: string;
+	/** Auto-created per-assignment Drive folder URL (coursework only). */
+	driveFolderUrl?: string;
 };
 export type StreamPage = { items: StreamItem[]; hasMore: boolean; token?: string };
 
@@ -298,9 +307,7 @@ export function parseCourseListPayload(payload: Json): WebCourseListItem[] {
 		if (!name) continue;
 		seen.add(id);
 		const owner =
-			Array.isArray(record[6]) && Array.isArray(record[6][0])
-				? String(record[6][0][0] ?? '')
-				: '';
+			Array.isArray(record[6]) && Array.isArray(record[6][0]) ? String(record[6][0][0] ?? '') : '';
 		const text = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
 		const ms = (v: unknown) =>
 			typeof v === 'number' && Number.isFinite(v) ? new Date(v).toISOString() : undefined;
@@ -311,8 +318,7 @@ export function parseCourseListPayload(payload: Json): WebCourseListItem[] {
 			descriptionHeading: text(record[11]),
 			room: text(record[14]),
 			ownerId: owner || undefined,
-			calendarId:
-				typeof record[23] === 'string' ? record[23].match(/cid=([^&]+)/)?.[1] : undefined,
+			calendarId: typeof record[23] === 'string' ? record[23].match(/cid=([^&]+)/)?.[1] : undefined,
 			creationTime: ms(record[1]),
 			updateTime: ms(record[2]),
 			courseState: record[20] === 2 ? 'ARCHIVED' : 'ACTIVE'
@@ -893,14 +899,18 @@ export const parseStreamResponse = (text: string) =>
 	parseStreamPayload(extractPayload(text, STREAM_RPC));
 
 const ENTRY_ANNOUNCEMENT = 3;
-const ENTRY_WORK_OR_MATERIAL = 2;
+const ENTRY_COURSEWORK = 2;
+const ENTRY_MATERIAL = 7;
 
-// Only two buckets: announcements, and titled wrapper-2 entries as
-// best-effort courseWork. Titled materials share the wrapper-2 shape, and
-// due dates, points and grades live deeper in the payload and are still
-// unmapped — there is deliberately no 'material' kind until a HAR capture
-// distinguishes the two.
-export type StreamKind = 'announcement' | 'courseWork';
+// Three buckets, probe-mapped against live traffic (see the session-probe
+// findings): announcements, coursework, and materials. Coursework is
+// wrapper 2 with a schedule node; materials are wrapper 7 — titled, never
+// carrying due dates or points. Due dates and points come from the schedule
+// node, topic references from PostItem field 15; grades are not in the
+// stream payload at all (the submission RPC carries state and attachments,
+// but no earned grade). Titled wrapper-2 entries without a schedule node
+// are still classified courseWork — that shape has not been observed.
+export type StreamKind = 'announcement' | 'courseWork' | 'material';
 
 const asNonEmptyString = (value: unknown): string | undefined =>
 	typeof value === 'string' && value ? value : undefined;
@@ -915,12 +925,12 @@ export const asMsTimestamp = (value: unknown): number | undefined =>
 /**
  * Single coercion point for the stream entry wrapper plus the raw PostItem
  * title/timestamp slots. Announcements arrive as entry `[3, null, [PostItem]]`,
- * assignments and materials as `[2, [PostItem]]`; only a non-empty string in
- * the title slot counts as a title (announcements carry an array there).
- * Wrapper 2 with a title is best-effort courseWork — titled materials share
- * the shape, and due dates, points and grades live deeper in the payload and
- * are still unmapped. Anything else defaults to announcement so consumers
- * never branch on undefined.
+ * coursework as `[2, [PostItem, schedule, folder]]` and materials as
+ * `[7, null, null, null, null, [PostItem]]`; only a non-empty string in the
+ * title slot counts as a title (announcements carry an array there). Wrapper 2
+ * with a title is courseWork, wrapper 7 with a title is material — both carry
+ * titles, so the wrapper is what separates them. Anything else defaults to
+ * announcement so consumers never branch on undefined.
  *
  * Pure by design: unexpected shapes report through `onFallback` instead of
  * logging directly, so a large sync emits one summary line per page (see
@@ -935,10 +945,11 @@ export function parsePostMeta(
 	const title = asNonEmptyString(rawTitle);
 	const createdAt = asMsTimestamp(rawTimestamp);
 	if (wrapper === ENTRY_ANNOUNCEMENT) return { kind: 'announcement', title, createdAt };
-	if (wrapper === ENTRY_WORK_OR_MATERIAL && title) return { kind: 'courseWork', title, createdAt };
+	if (wrapper === ENTRY_COURSEWORK && title) return { kind: 'courseWork', title, createdAt };
+	if (wrapper === ENTRY_MATERIAL && title) return { kind: 'material', title, createdAt };
 	// Fallback is deliberately announcement so consumers never branch on
 	// undefined — but it misfiles untitled wrapper-2 entries and unknown
-	// wrappers, so report it: the next HAR capture starts from these lines.
+	// wrappers, so report it: the next capture starts from these lines.
 	onFallback?.({ wrapper, title });
 	return { kind: 'announcement', title, createdAt };
 }
@@ -949,30 +960,60 @@ export function parseStreamPayload(payload: Json): StreamPage {
 	const items: StreamItem[] = [];
 	const fallbacks = new Map<string, number>();
 	for (const entry of env.entries ?? []) {
-		const located = findItem(entry as Json);
+		const raw = entry as Json;
+		const located = findItem(raw);
 		if (!located) continue;
 		const item = decode(located, PostItem);
-		const rich = findRichText(located);
-		if (!item?.key || !rich) continue;
-		const wrapper = Array.isArray(entry) ? entry[0] : undefined;
-		const { kind, title, createdAt } = parsePostMeta(wrapper, item.rawTitle, item.rawTimestamp, (info) => {
-			const key = `wrapper=${JSON.stringify(info.wrapper)}, title=${info.title === undefined ? 'none' : JSON.stringify(info.title)}`;
+		if (!item?.key) continue;
+		const wrapper = Array.isArray(raw) ? raw[0] : undefined;
+		// Coursework carries its schedule and Drive-folder nodes as siblings
+		// of the PostItem inside the entry body; announcements and materials
+		// have neither.
+		let schedule: { dueAt?: number; assignedAt?: number; maxPoints?: number } | undefined;
+		let folder: { label?: string; folderUrl?: string } | undefined;
+		if (wrapper === ENTRY_COURSEWORK && Array.isArray(raw) && Array.isArray(raw[1])) {
+			const body = decode(raw[1], WorkBody);
+			schedule = body?.schedule;
+			folder = body?.folder;
+		}
+		// Posts without a rich-text node (most materials, plain coursework)
+		// have no body in the payload at all — an empty text is the honest
+		// reading, not a parse failure. Only keyless or fully contentless
+		// shapes are skipped, with a count, so a shape change shows up in
+		// one summary line instead of vanishing.
+		const rich = findRichText(raw);
+		const { kind, title, createdAt } = parsePostMeta(
+			wrapper,
+			item.rawTitle,
+			item.rawTimestamp,
+			(info) => {
+				const key = `wrapper=${JSON.stringify(info.wrapper)}, title=${info.title === undefined ? 'none' : JSON.stringify(info.title)}`;
+				fallbacks.set(key, (fallbacks.get(key) ?? 0) + 1);
+			}
+		);
+		if (!rich && !title) {
+			const key = `empty wrapper=${JSON.stringify(wrapper)}`;
 			fallbacks.set(key, (fallbacks.get(key) ?? 0) + 1);
-		});
+			continue;
+		}
 		items.push({
 			id: item.key.id,
 			courseId: item.key.course?.id ?? '',
-			text: rich.text,
-			html: rich.html,
+			text: rich?.text ?? '',
+			html: rich?.html,
 			creatorId: item.creator?.id,
 			kind,
 			title,
-			createdAt
+			createdAt,
+			dueAt: schedule?.dueAt,
+			maxPoints: schedule?.maxPoints,
+			topicId: item.topicRefs?.[0]?.id,
+			driveFolderUrl: folder?.folderUrl
 		});
 	}
 	if (fallbacks.size > 0)
 		console.debug(
-			`parseStreamPayload: filed ${[...fallbacks.values()].reduce((a, b) => a + b, 0)} item(s) as announcement: ` +
+			`parseStreamPayload: adjusted ${[...fallbacks.values()].reduce((a, b) => a + b, 0)} item(s): ` +
 				[...fallbacks].map(([shape, n]) => `${n}x (${shape})`).join('; ')
 		);
 	return {

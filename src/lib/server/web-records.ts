@@ -7,7 +7,10 @@
 //   HTML scrape stays only as a fallback: the page is a JS shell with no
 //   course data, so it yields section/room-empty rows when used.
 // - posts: the stream RPC already used for enrichment. Titles and timestamps
-//   are best-effort; due dates, max points and topics are not mapped yet.
+//   are best-effort; due dates, max points, topic ids and the per-assignment
+//   Drive folder are mapped from the stream (probe-verified). Topic names and
+//   per-item attachment URLs still need another RPC, and material posts carry
+//   no attachments yet.
 // - people: members + profiles RPCs, same as enrichment.
 // - submissions/grades: NOT available. The web QuerySubmission RPC rejects
 //   replays from this session, so the grades tab stays empty in session mode.
@@ -39,10 +42,12 @@ import { getCourse, getWebSession } from './store';
 import type {
 	Provider,
 	RawAnnouncement,
+	RawAttachment,
 	RawCourse,
 	RawCourseContent,
 	RawCourseWork,
 	RawLookup,
+	RawMaterial,
 	RawOverview,
 	RawSubmissionAction,
 	RawTeacher
@@ -123,7 +128,7 @@ function postBase(courseId: string, item: StreamItem, path: string) {
 	// filters.
 	return {
 		id: item.id,
-		materials: [],
+		materials: [] as RawAttachment[],
 		alternateLink: `${courseUrl(courseId)}/${path}`,
 		creationTime: item.createdAt ? new Date(item.createdAt).toISOString() : undefined,
 		creatorUserId: item.creatorId
@@ -133,6 +138,19 @@ function postBase(courseId: string, item: StreamItem, path: string) {
 const postTitle = (item: StreamItem) =>
 	item.title || item.text.slice(0, TITLE_FALLBACK_LENGTH) || 'Untitled';
 
+// The stream carries the due instant as a millisecond epoch; the store's
+// dueAt() rebuilds an instant from {year, month, day} + {hours, minutes} via
+// Date.UTC, so hand it the UTC components of the observed instant and the
+// round-trip is exact.
+const dueParts = (dueAt?: number) => {
+	if (!dueAt) return {};
+	const d = new Date(dueAt);
+	return {
+		dueDate: { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() },
+		dueTime: { hours: d.getUTCHours(), minutes: d.getUTCMinutes() }
+	};
+};
+
 async function courseContent(
 	courseId: string,
 	since: number,
@@ -141,6 +159,7 @@ async function courseContent(
 	const session = requireSession();
 	const announcements: RawAnnouncement[] = [];
 	const courseWork: RawCourseWork[] = [];
+	const materials: RawMaterial[] = [];
 	// No early break on `since`: stream ordering isn't established as
 	// creation-descending, so stopping at the first stale item could drop
 	// content. Filter on creation time instead; edits to existing posts
@@ -148,25 +167,44 @@ async function courseContent(
 	for await (const page of iterateCourseStream(session, courseId)) {
 		for (const item of page.items) {
 			if (since && item.createdAt && item.createdAt < since) continue;
+			// Probe-mapped stream shapes (see the session-probe findings):
+			// coursework carries due date, points and a topic reference;
+			// materials are wrapper-7 posts with titles but no schedule node.
+			// Both lack per-item attachment URLs in the stream — coursework
+			// exposes only its auto-created Drive folder, and material
+			// attachments are referenced by id and need another RPC.
 			if (item.kind === 'courseWork')
 				courseWork.push({
 					...postBase(courseId, item, `a/${item.id}/details`),
+					...(item.driveFolderUrl
+						? {
+								materials: [{ type: 'drive', url: item.driveFolderUrl } satisfies RawAttachment]
+							}
+						: {}),
 					title: postTitle(item),
 					description: item.text,
 					state: 'PUBLISHED',
-					workType: 'ASSIGNMENT'
+					workType: 'ASSIGNMENT',
+					...dueParts(item.dueAt),
+					maxPoints: item.maxPoints,
+					topicId: item.topicId
+				});
+			else if (item.kind === 'material')
+				materials.push({
+					...postBase(courseId, item, `m/${item.id}`),
+					title: postTitle(item),
+					description: item.text,
+					topicId: item.topicId
 				});
 			// Announcements are the default bucket: the classifier only
-			// returns courseWork on a positive title signal. Materials share
-			// the coursework shape until mapped, so they surface as
-			// courseWork above.
+			// returns courseWork or material on a positive wrapper signal.
 			else announcements.push({ ...postBase(courseId, item, `p/${item.id}`), text: item.text });
 		}
 	}
-	// materials stays an explicit empty list (not omitted) so a full sync
-	// clears rows left by a previous source; submissions below does the same
-	// for grades, which the session cannot see.
-	return { partial: since > 0, announcements, courseWork, materials: [], submissions: [] };
+	// materials is a real list now, but still empty for material posts whose
+	// attachments need another RPC; submissions stays the same (grades are
+	// not in any mapped session RPC).
+	return { partial: since > 0, announcements, courseWork, materials, submissions: [] };
 }
 
 async function lookup(courseId: string, users: string[]): Promise<RawLookup> {
