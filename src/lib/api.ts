@@ -1,4 +1,4 @@
-import type { Comment, Course, SubmissionFile } from '#lib/shared/types.ts';
+import type { Attachment, Comment, Course, SubmissionFile } from '#lib/shared/types.ts';
 
 export const errorMessage = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
@@ -51,6 +51,16 @@ export const comments = {
 	post: (ref: WorkRef, text: string) => api.post('/api/comments', { ...ref, text }),
 	remove: (ref: WorkRef, commentId: string) => api.del('/api/comments', { ...ref, commentId })
 };
+
+export const classComments = {
+	list: (ref: WorkRef) =>
+		api.get<{ comments: Comment[] }>('/api/class-comments', ref).then((r) => r.comments),
+	post: (ref: WorkRef, text: string) => api.post('/api/class-comments', { ...ref, text }),
+	remove: (ref: WorkRef, commentId: string) => api.del('/api/class-comments', { ...ref, commentId })
+};
+
+export const postAttachments = (ref: WorkRef) =>
+	api.get<{ attachments: Attachment[] }>('/api/post-attachments', ref).then((r) => r.attachments);
 
 const files = (r: { files: SubmissionFile[] }) => r.files;
 

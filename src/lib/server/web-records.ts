@@ -8,9 +8,9 @@
 //   course data, so it yields section/room-empty rows when used.
 // - posts: the stream RPC already used for enrichment. Titles and timestamps
 //   are best-effort; due dates, max points, topic ids and the per-assignment
-//   Drive folder are mapped from the stream (probe-verified). Topic names and
-//   per-item attachment URLs still need another RPC, and material posts carry
-//   no attachments yet.
+//   Drive folder are mapped from the stream (probe-verified), and topic
+//   names come from the ZZFlc list query. Per-item attachment URLs still
+//   need another RPC, and material posts carry no attachments yet.
 // - people: members + profiles RPCs, same as enrichment.
 // - submissions: the student-keyed Zj93ge query the to-do pages use,
 //   batched per course: state (assigned / turned in / returned / reclaimed),
@@ -26,6 +26,7 @@ import {
 	SessionError,
 	encodeCourseId,
 	fetchSubmissions,
+	fetchTopics,
 	writeSubmissionState,
 	type StreamItem
 } from './classroom-web';
@@ -213,14 +214,15 @@ async function courseContent(
 		}
 	}
 	// Submissions come from the student-keyed Zj93ge query the to-do pages
-	// use (see fetchSubmissions). A failure leaves the course's grades stale
-	// but shouldn't take the whole content pass down, so it degrades to an
-	// error entry the sync reports like any other.
+	// use (see fetchSubmissions); topic names from the ZZFlc list query.
+	// Each failure only degrades to an error entry the sync reports like
+	// any other, so one flaky RPC never takes the whole content pass down.
 	let submissions: RawSubmission[] = [];
+	let topics: { id: string; name: string; updateTime?: string }[] = [];
 	const errors: Record<string, string> = {};
-	if (wantSubmissions && workIds.length > 0) {
-		try {
-			const { session: web, studentId, jar, tokens } = await withWebStudent();
+	try {
+		const { session: web, studentId, jar, tokens } = await withWebStudent();
+		if (wantSubmissions && workIds.length > 0) {
 			const records = await fetchSubmissions(
 				jar,
 				web.authuser,
@@ -245,9 +247,16 @@ async function courseContent(
 					: {}),
 				attachments: []
 			}));
-		} catch (err) {
-			errors.submissions = err instanceof Error ? err.message : String(err);
 		}
+		topics = (await fetchTopics(jar, web.authuser, tokens, courseId)).map((t) => ({
+			id: t.id,
+			name: t.name,
+			...(t.updateTime ? { updateTime: new Date(t.updateTime).toISOString() } : {})
+		}));
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		if (wantSubmissions && workIds.length > 0) errors.submissions = message;
+		errors.topics = message;
 	}
 	// materials is a real list now, but still empty for material posts whose
 	// attachments need another RPC.
@@ -257,6 +266,7 @@ async function courseContent(
 		courseWork,
 		materials,
 		submissions,
+		...(topics.length > 0 ? { topics } : {}),
 		...(Object.keys(errors).length > 0 ? { errors } : {})
 	};
 }

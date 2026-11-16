@@ -3,6 +3,8 @@ import {
 	buildProfileArgs,
 	buildStreamArgs,
 	buildSubmissionsArgs,
+	buildTopicsArgs,
+	buildClassCommentsArgs,
 	encodeCourseId,
 	findHomeRedirect,
 	mergeCookies,
@@ -10,7 +12,10 @@ import {
 	parseMembersPayload,
 	parseProfilesPayload,
 	parseStreamResponse,
-	parseSubmissionsPayload
+	parseSubmissionsPayload,
+	parseTopicsPayload,
+	parseCommentsPayload,
+	parseWorkAttachmentsPayload
 } from './classroom-web.ts';
 import { parseCoursesHtml, describeHomeHtml } from './course-discovery.ts';
 import type { Json } from './classroom/proto.ts';
@@ -628,4 +633,130 @@ test('parses submission records with states, grades and the late substate', () =
 	expect(parseSubmissionsPayload(['hrq.sub', [false], []])).toEqual([]);
 	expect(parseSubmissionsPayload(['hrq.sub', [false], ['garbage', null]])).toEqual([]);
 	expect(parseSubmissionsPayload({})).toEqual([]);
+});
+
+// ---- topics (ZZFlc) ---------------------------------------------------------
+
+test('builds and parses the topics list query', () => {
+	expect(buildTopicsArgs('876371853259')).toBe('[[100,null,1,0],[1,1,1],[[[[876371853259]]]],2]');
+	// Captured 2026-11-16 from a course page; ids redacted.
+	expect(
+		parseTopicsPayload([
+			'hrt.qr',
+			null,
+			[
+				[['893299732184', ['876371853259']], 'Chapter 3', 1794501330791, 'ew=='],
+				[['886657083588', ['876371853259']], 'Chapter 2', 1791294257505, 'fA=='],
+				// nameless or malformed records are skipped
+				[['877910233768', ['876371853259']], null, 1789744756322, 'fQ=='],
+				'garbage'
+			]
+		])
+	).toEqual([
+		{ id: '893299732184', courseId: '876371853259', name: 'Chapter 3', updateTime: 1794501330791 },
+		{ id: '886657083588', courseId: '876371853259', name: 'Chapter 2', updateTime: 1791294257505 }
+	]);
+	expect(parseTopicsPayload(['hrt.qr', null, []])).toEqual([]);
+	expect(parseTopicsPayload({})).toEqual([]);
+});
+
+// ---- post attachments (t51ITc) ----------------------------------------------
+
+test('parses the work-detail attachment objects', () => {
+	// Captured 2026-11-16 from a material page; ids and URLs shortened but
+	// structurally faithful: [attachment, null, ref].
+	const attachment = [
+		'Number patterns key .pdf',
+		null,
+		'1cg-_Gbjk8L8YfzwB_2BSNZG4bNVQgOzT',
+		2,
+		'application/pdf',
+		'https://lh3.googleusercontent.com/drive-storage/AJQ={size}',
+		'https://drive.google.com/file/d/1cg-_Gbjk8L8YfzwB_2BSNZG4bNVQgOzT/view?usp=drive_web',
+		null,
+		null,
+		null,
+		2,
+		null,
+		null,
+		null,
+		[
+			'Number patterns key .pdf',
+			'https://lh3.googleusercontent.com/drive-storage/AJQ={size}',
+			'https://drive.google.com/file/d/1cg-_Gbjk8L8YfzwB_2BSNZG4bNVQgOzT/view?usp=drive_web',
+			'https://drive.google.com/viewer/upload?ds=APznza'
+		],
+		1,
+		null,
+		'898473798048',
+		null,
+		null,
+		1
+	];
+	expect(
+		parseWorkAttachmentsPayload([
+			null,
+			[[attachment, null, [['898473798046', ['876371853259']], '898473798048']]]
+		])
+	).toEqual([
+		{
+			attachmentId: '898473798048',
+			title: 'Number patterns key .pdf',
+			driveId: '1cg-_Gbjk8L8YfzwB_2BSNZG4bNVQgOzT',
+			mime: 'application/pdf',
+			url: 'https://drive.google.com/file/d/1cg-_Gbjk8L8YfzwB_2BSNZG4bNVQgOzT/view?usp=drive_web',
+			thumbnailUrl: 'https://lh3.googleusercontent.com/drive-storage/AJQ=s400'
+		}
+	]);
+	// A record with no id in either slot is skipped, not guessed.
+	expect(
+		parseWorkAttachmentsPayload([null, [[['orphan.pdf', null, 'id-x', 2, 'text/plain']]]])
+	).toEqual([]);
+	expect(parseWorkAttachmentsPayload([null, []])).toEqual([]);
+	expect(parseWorkAttachmentsPayload({})).toEqual([]);
+});
+
+// ---- class comments (sLc6hf with the class scope) ---------------------------
+
+test('builds the class-comment query the details page sends', () => {
+	expect(buildClassCommentsArgs('899119810307', '876371853259')).toBe(
+		'[[100,null,1,0],' +
+			'[1,1,1,1,null,null,[1],1,null,3,[1,null,1]],' +
+			'[[null,null,[2,3]],[[899119810307,[876371853259]]],null,null,[[2]]]]'
+	);
+});
+
+test('parses class comments with the shared comment proto', () => {
+	// parseComment is shared with the private-comment path; a class-comment
+	// record uses the same proto (verified against the private fixtures).
+	expect(
+		parseCommentsPayload([
+			'hrq.cmt',
+			null,
+			[
+				[
+					['cmt-1', null, ['899119810307', ['876371853259']], 1],
+					1794586000000,
+					null,
+					null,
+					['33448387591'],
+					null,
+					null,
+					null,
+					[1],
+					null,
+					null,
+					['edu.rt', 'Great question!', null, null, [null, '<div>Great question!</div>']]
+				]
+			]
+		])
+	).toEqual([
+		{
+			id: 'cmt-1',
+			authorId: '33448387591',
+			text: 'Great question!',
+			html: '<div>Great question!</div>',
+			createdAt: 1794586000000
+		}
+	]);
 });

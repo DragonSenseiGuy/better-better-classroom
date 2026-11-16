@@ -638,7 +638,6 @@ export type WebSubmissionRecord = {
 };
 
 export type SubmissionKey = { studentId: string; workId: string; courseId: string };
-
 export function buildSubmissionsArgs(keys: SubmissionKey[]): string {
 	const list = keys.map((k) => `[${k.studentId},[${k.workId},[${k.courseId}]]]`).join(',');
 	// Framing, read mask, keys under [null,null,...], trailing 1 at the args
@@ -718,6 +717,164 @@ export async function fetchSubmissions(
 		out.push(...parseSubmissionsPayload(payload));
 	}
 	return out;
+}
+
+// ---- topics (RPC ZZFlc, HomeroomTopicsService.ListTopics) ------------------
+//
+// One call per course, captured 2026-11-16 from a course page. The stream
+// RPC only carries topic ids, so this is what names the classwork filters.
+// Response: ["hrt.qr", null, [[[topicId,[courseId]], name, updatedAtMs,
+// etag], ...]].
+
+const TOPICS_RPC = 'ZZFlc';
+
+export type WebTopic = { id: string; courseId: string; name: string; updateTime?: number };
+
+export function buildTopicsArgs(courseId: string): string {
+	return `[[100,null,1,0],[1,1,1],[[[[${courseId}]]]],2]`;
+}
+
+export function parseTopicsPayload(payload: Json): WebTopic[] {
+	const out: WebTopic[] = [];
+	if (!Array.isArray(payload) || !Array.isArray(payload[2])) return out;
+	for (const record of payload[2]) {
+		if (!Array.isArray(record) || !Array.isArray(record[0])) continue;
+		const [topicId, courseWrap] = record[0] as [string, Json];
+		if (typeof topicId !== 'string' || !Array.isArray(courseWrap)) continue;
+		const courseId = courseWrap[0];
+		if (typeof courseId !== 'string' || typeof record[1] !== 'string') continue;
+		out.push({
+			id: topicId,
+			courseId,
+			name: record[1],
+			updateTime: asMsTimestamp(record[2])
+		});
+	}
+	return out;
+}
+
+export async function fetchTopics(
+	jar: CookieJar,
+	authuser: number,
+	tokens: WebTokens,
+	courseId: string,
+	capture?: RawCapture[]
+): Promise<WebTopic[]> {
+	const payload = await callRpc(
+		jar,
+		authuser,
+		tokens,
+		TOPICS_RPC,
+		buildTopicsArgs(courseId),
+		`/u/${authuser}/c/${encodeCourseId(courseId)}`,
+		capture
+	);
+	return parseTopicsPayload(payload);
+}
+
+// ---- post attachments (RPC t51ITc) ------------------------------------------
+//
+// The stream only references a post's attachments by id; this detail query
+// returns the objects: title, Drive file id, mime, thumbnail and the view
+// URL. Captured 2026-11-16 from a material page (single work key). The
+// server silently returns an empty list for multiple keys in one call, so
+// this stays one call per post — detail pages use it on demand.
+
+const WORK_DETAIL_RPC = 't51ITc';
+
+const WORK_ATTACHMENT_MASK =
+	'[[null,1,1,1,1,1,null,1,1,1,1,1,1,null,[[1,1,1,1,1],1,1,1,1,1,1],[[1,1,1,1,1],1,1,1,[1,1],1],1,null,1,[[1,1,1,1,1],1,1],1,[[1,1,1,1,1],1]]]';
+
+export type WebPostAttachment = {
+	attachmentId: string;
+	title?: string;
+	driveId?: string;
+	mime?: string;
+	url?: string;
+	thumbnailUrl?: string;
+};
+
+export function parseWorkAttachmentsPayload(payload: Json): WebPostAttachment[] {
+	const out: WebPostAttachment[] = [];
+	// payload[1] lists one record per attachment; each record is
+	// [attachment, null, ref] where the ref echoes
+	// [[workId,[courseId]], attachmentId].
+	if (!Array.isArray(payload) || !Array.isArray(payload[1])) return out;
+	for (const record of payload[1]) {
+		if (!Array.isArray(record) || !Array.isArray(record[0])) continue;
+		const a = record[0];
+		const attachmentId =
+			typeof a[17] === 'string'
+				? a[17]
+				: Array.isArray(record[2]) && Array.isArray(record[2][1])
+					? record[2][1]
+					: undefined;
+		if (typeof attachmentId !== 'string') continue;
+		out.push({
+			attachmentId,
+			title: typeof a[0] === 'string' ? a[0] : undefined,
+			driveId: typeof a[2] === 'string' ? a[2] : undefined,
+			mime: typeof a[4] === 'string' ? a[4] : undefined,
+			url: typeof a[6] === 'string' ? a[6] : undefined,
+			// Drive thumbs end in a ={size} placeholder the page fills in.
+			thumbnailUrl: typeof a[5] === 'string' ? a[5].replace('{size}', 's400') : undefined
+		});
+	}
+	return out;
+}
+
+export async function fetchWorkAttachments(
+	jar: CookieJar,
+	authuser: number,
+	tokens: WebTokens,
+	workId: string,
+	courseId: string,
+	capture?: RawCapture[]
+): Promise<WebPostAttachment[]> {
+	const payload = await callRpc(
+		jar,
+		authuser,
+		tokens,
+		WORK_DETAIL_RPC,
+		`[[null,null,1,0],[[${workId},[${courseId}]]],${WORK_ATTACHMENT_MASK}]`,
+		`/u/${authuser}/c/${encodeCourseId(courseId)}`,
+		capture,
+		submissionContext(courseId)
+	);
+	return parseWorkAttachmentsPayload(payload);
+}
+
+// ---- class comments (same sLc6hf query, class scope) ------------------------
+//
+// The assignment-details page queries both comment kinds per post: the
+// private scope keys the student's submission, the class scope keys the
+// post itself and ends in [[2]] (vs [[1]] for private). Captured
+// 2026-11-16; both use the same comment mask and record proto as
+// listComments above.
+
+export function buildClassCommentsArgs(workId: string, courseId: string): string {
+	return `[[100,null,1,0],${COMMENT_MASK},[[null,null,[2,3]],[[${workId},[${courseId}]]],null,null,[[2]]]]`;
+}
+
+export async function listClassComments(
+	jar: CookieJar,
+	authuser: number,
+	tokens: WebTokens,
+	workId: string,
+	courseId: string,
+	capture?: RawCapture[]
+): Promise<WebComment[]> {
+	const payload = await callRpc(
+		jar,
+		authuser,
+		tokens,
+		COMMENT_QUERY_RPC,
+		buildClassCommentsArgs(workId, courseId),
+		`/u/${authuser}/c/${encodeCourseId(courseId)}`,
+		capture,
+		submissionContext(courseId)
+	);
+	return parseCommentsPayload(payload);
 }
 
 // ---- attachments -----------------------------------------------------------
@@ -876,6 +1033,11 @@ function commentProto(commentKey: string, authorId: string, text: string) {
 	return `[${commentKey},null,null,null,[${authorId}],null,null,null,[1],null,null,${rich}]`;
 }
 
+export function parseCommentsPayload(payload: Json): WebComment[] {
+	const entries = Array.isArray(payload) && Array.isArray(payload[2]) ? payload[2] : [];
+	return entries.map(parseComment).filter((c): c is WebComment => c !== null);
+}
+
 export async function listComments(
 	jar: CookieJar,
 	authuser: number,
@@ -895,8 +1057,7 @@ export async function listComments(
 		undefined,
 		submissionContext(courseId)
 	);
-	const entries = Array.isArray(payload) && Array.isArray(payload[2]) ? payload[2] : [];
-	return entries.map(parseComment).filter((c): c is WebComment => c !== null);
+	return parseCommentsPayload(payload);
 }
 
 export async function writeComment(
@@ -912,6 +1073,41 @@ export async function writeComment(
 ): Promise<WebComment | null> {
 	const key = `[${studentId},[${workId},[${courseId}]]]`;
 	const commentKey = `[${commentId ?? 'null'},null,${key},3]`;
+	const args = `[[${verb === 'create' ? 2 : 4}],[[${commentKey},${commentProto(commentKey, studentId, text)}]],${COMMENT_MASK}]`;
+	const payload = await callRpc(
+		jar,
+		authuser,
+		tokens,
+		COMMENT_WRITE_RPC,
+		args,
+		`/u/${authuser}/c/${encodeCourseId(courseId)}/a/${encodeCourseId(workId)}/details`,
+		undefined,
+		submissionContext(courseId)
+	);
+	const record = Array.isArray(payload) && Array.isArray(payload[1]) ? payload[1][0] : null;
+	return parseComment(record as Json);
+}
+
+/**
+ * Class comments sit directly on the post, not on a submission: the comment
+ * key's parent is the post key [workId,[courseId]] and its kind is 1 (vs the
+ * submission key and kind 3 of a private comment). Modeled on the captured
+ * private-comment write; not exercised against a live account — posting one
+ * is a state change visible to the whole class.
+ */
+export async function writeClassComment(
+	verb: 'create' | 'delete',
+	jar: CookieJar,
+	authuser: number,
+	tokens: WebTokens,
+	studentId: string,
+	workId: string,
+	courseId: string,
+	text: string,
+	commentId?: string
+): Promise<WebComment | null> {
+	const postKey = `[${workId},[${courseId}]]`;
+	const commentKey = `[${commentId ?? 'null'},null,${postKey},1]`;
 	const args = `[[${verb === 'create' ? 2 : 4}],[[${commentKey},${commentProto(commentKey, studentId, text)}]],${COMMENT_MASK}]`;
 	const payload = await callRpc(
 		jar,

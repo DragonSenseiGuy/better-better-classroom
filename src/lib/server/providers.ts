@@ -1,4 +1,5 @@
 import type {
+	Attachment,
 	Change,
 	CollectionName,
 	Comment,
@@ -155,6 +156,16 @@ export type Enricher = {
 		post(courseId: string, workId: string, text: string): Promise<Comment | null>;
 		remove(courseId: string, workId: string, commentId: string): Promise<void>;
 	};
+	/** Class comments: same thread UI, keyed on the post instead of the
+	 * student's submission. */
+	classComments?: {
+		list(courseId: string, workId: string): Promise<Comment[]>;
+		post(courseId: string, workId: string, text: string): Promise<Comment | null>;
+		remove(courseId: string, workId: string, commentId: string): Promise<void>;
+	};
+	/** Attachments on the post itself (coursework or material), as the
+	 * details page shows them; the stream only references them by id. */
+	postAttachments?(courseId: string, workId: string): Promise<Attachment[]>;
 	attachments?: {
 		list(courseId: string, workId: string): Promise<SubmissionFile[]>;
 		upload(

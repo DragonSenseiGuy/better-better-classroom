@@ -2,6 +2,8 @@
 	import { page } from '$app/state';
 	import { useLiveQuery, eq } from '@tanstack/svelte-db';
 	import { courses, courseWork, submissions } from '#lib/db/collections.ts';
+	import { postAttachments } from '#lib/api.ts';
+	import type { Attachment } from '#lib/shared/types.ts';
 	import { topicById } from '#lib/db/queries.ts';
 	import { gradePercent, statusLabel, summarize } from '#lib/work.ts';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -9,6 +11,7 @@
 	import { Separator } from '#lib/components/ui/separator/index.js';
 	import StatusBadge from '#lib/components/status-badge.svelte';
 	import Attachments from '#lib/components/attachments.svelte';
+	import ClassComments from '#lib/components/class-comments.svelte';
 	import RichText from '#lib/components/rich-text.svelte';
 	import { formatDateLong, formatDateTime, formatDue, formatRelative } from '#lib/format.ts';
 	import { displayName } from '#lib/course.ts';
@@ -39,10 +42,38 @@
 	const privatePlaceholder = $derived(
 		teacherName ? `Add comment to ${teacherName}…` : 'Add a private comment for your teacher…'
 	);
-	// Session-only sync now maps due dates, points and topic ids from the
-	// stream; it still cannot see grades, per-item attachments or topic
-	// names. Render those as unknown instead of asserting absence.
+	// Session-only sync maps due dates, points, submission states, grades and
+	// topic names; per-item attachment URLs are not in the stream, so detail
+	// pages fetch them on open (one call per post, by design).
 	const limited = $derived(page.data.snapshot.source !== 'apps-script');
+	// Material attachments live in a separate details RPC the stream does not
+	// carry, so in session mode we fetch them for this post on open. Apps
+	// Script snapshots already include them.
+	let extraMaterials = $state<Attachment[] | null>(null);
+	let extraMaterialsFor = $state<string | null>(null);
+	$effect(() => {
+		const current = w;
+		if (
+			!limited ||
+			!current ||
+			current.materials.length > 0 ||
+			!current.courseId ||
+			extraMaterialsFor === current.id
+		)
+			return;
+		extraMaterialsFor = current.id;
+		postAttachments({ courseId: current.courseId, workId: current.id })
+			.then((found) => {
+				if (extraMaterialsFor === current.id) extraMaterials = found;
+			})
+			.catch(() => {
+				// Details RPC unavailable for this post; leave the section as-is.
+			});
+	});
+	const attachmentItems = $derived<Attachment[]>([
+		...(w?.materials ?? []),
+		...(extraMaterials ?? [])
+	]);
 	const dueText = $derived(
 		!w || w.dueAt === undefined
 			? 'No due date'
@@ -97,8 +128,8 @@
 			class="mt-6 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground"
 		>
 			<span
-				>Session sync can't see grades, per-item attachments or topic names. Connect the Apps Script
-				source for the full picture.</span
+				>Session mode: grades, topics and to-do states sync; per-item attachments load when you open
+				an item. Connect the Apps Script source for the full picture.</span
 			>
 			<Button variant="outline" size="sm" href="/setup">Connect Apps Script</Button>
 		</div>
@@ -119,6 +150,12 @@
 			{#if w.materials.length}
 				<h2 class="mt-8 text-base font-semibold tracking-tight">Attachments</h2>
 				<div class="mt-2 max-w-lg"><Attachments items={w.materials} /></div>
+			{:else if limited && (extraMaterials === null || extraMaterials.length > 0)}
+				<!-- Post attachments are not in the session-mode stream; fetch on open. -->
+				{#if attachmentItems.length}
+					<h2 class="mt-8 text-base font-semibold tracking-tight">Attachments</h2>
+					<div class="mt-2 max-w-lg"><Attachments items={attachmentItems} /></div>
+				{/if}
 			{/if}
 		</div>
 		<aside>
@@ -161,6 +198,7 @@
 			{/if}
 			<Separator class="my-6" />
 			<PrivateComments work={w} {teacherName} />
+			<ClassComments courseId={w.courseId} workId={w.id} />
 		</aside>
 	</div>
 {/if}
