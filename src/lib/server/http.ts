@@ -13,10 +13,9 @@ export function workIds(url: URL) {
 	return { courseId, workId };
 }
 
-export function requireEnricher<K extends 'comments' | 'attachments' | 'classComments' | 'postAttachments'>(
-	feature: K,
-	label: string
-): NonNullable<Enricher[K]> {
+export function requireEnricher<
+	K extends 'comments' | 'attachments' | 'classComments' | 'postAttachments'
+>(feature: K, label: string): NonNullable<Enricher[K]> {
 	const provider = enrichers().find((p) => p.enrich[feature]);
 	if (!provider) error(503, `${label} need a Classroom session. Add one in Settings.`);
 	return provider.enrich[feature]!;

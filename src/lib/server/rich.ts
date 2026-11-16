@@ -86,12 +86,7 @@ export function webExpiredState(): WebExpired {
 	const session = getWebSession();
 	if (!session) return { expired: false };
 	const status = getRichStatus();
-	if (
-		status &&
-		!status.ok &&
-		status.expired &&
-		status.sessionSavedAt === session.savedAt
-	)
+	if (status && !status.ok && status.expired && status.sessionSavedAt === session.savedAt)
 		return { expired: true, savedAt: session.savedAt, detail: status.message };
 	return { expired: false };
 }
@@ -221,7 +216,7 @@ export const webProvider: Provider = {
 						: 'Cookie saved.'
 		};
 	},
-		enrich: {
+	enrich: {
 		enrich: syncRichText,
 		keepAlive: refreshSavedSession,
 		submissionAction,
