@@ -32,3 +32,21 @@ python3 scripts/session-probe/analyze.py <captures-dir>/stream-<courseId>.txt
 Pick a course with a graded assignment that has attachments. Then paste
 the analyzer output back. Grades take a second round (`members` to find
 your web id, then `subqueryraw 0 <courseId> <workId>` + analyze).
+
+More modes:
+
+```bash
+# several work ids in one submission query (does batching work?)
+bun scripts/session-probe/harness.ts subbatch 0 <courseId> <workId1>,<workId2>
+# same query with the student-keyed framing
+bun scripts/session-probe/harness.ts substudent 0 <courseId> <studentId> <workId,...>
+# raw HTML of any Classroom page (to-do, classwork, ...)
+bun scripts/session-probe/harness.ts pagedump 0 /u/0/a
+# download the page's JS bundles and list rpcid <-> tag pairs
+bun scripts/session-probe/harness.ts jsrpc 0 /u/0/a
+```
+
+`jsrpc` writes `rpcmap.txt` (tags with their rpcids, e.g.
+`hrw.sbq Qj7x9d`) — the map for finding the submission/todo/topics
+read RPCs without guessing. All read-only; bundles are saved only as a
+count, the map file holds ids only.

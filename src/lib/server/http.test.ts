@@ -31,7 +31,7 @@ test('workIds requires both params', () => {
 	expect(status(() => workIds(new URL('http://x/?courseId=c')))).toBe(400);
 });
 
-test('upstream keeps http errors and wraps the rest as 502', async () => {
+test('upstream keeps http errors and wraps the rest as 424', async () => {
 	expect(await upstream(async () => 1)).toBe(1);
 	await expect(
 		upstream(async () => {
@@ -42,5 +42,5 @@ test('upstream keeps http errors and wraps the rest as 502', async () => {
 		upstream(async () => {
 			throw new Error('upstream down');
 		})
-	).rejects.toMatchObject({ status: 502, body: { message: 'upstream down' } });
+	).rejects.toMatchObject({ status: 424, body: { message: 'upstream down' } });
 });

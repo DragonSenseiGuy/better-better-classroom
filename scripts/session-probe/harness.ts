@@ -111,6 +111,49 @@ async function tokensFor(authuser: number): Promise<WebTokens> {
 	return parseTokens(html);
 }
 
+/** Plain page GET (no redirect following): whatever Google answers, saved. */
+async function fetchAny(authuser: number, path: string): Promise<{ status: number; html: string }> {
+	const res = await fetch(`${ORIGIN}${path}`, {
+		headers: {
+			'user-agent': UA,
+			accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+			cookie: jar.cookie
+		},
+		redirect: 'manual',
+		signal: AbortSignal.timeout(60_000)
+	});
+	return { status: res.status, html: await res.text() };
+}
+
+/** Script-src URLs referenced by a page's HTML (JS bundles to download). */
+export function bundleUrls(html: string): string[] {
+	const urls = new Set<string>();
+	for (const m of html.matchAll(/src="(\/[^"]+\.js[^"]*)"/g)) urls.add(m[1]);
+	return [...urls];
+}
+
+/**
+ * RPC-id discovery inside Classroom's JS bundles: the batchexecute client
+ * stores endpoint ids next to their internal tags (e.g. "CVt8yf","hrw.sbm").
+ * Returns tag→rpcid pairs only — no other bundle content leaves the machine.
+ */
+export function rpcTagPairs(js: string): Map<string, string[]> {
+	// Both orders occur in bundles; the tag side is unambiguous (`hr*.`/`trs*`),
+	// the rpcid side is the 5-8 char id next to it.
+	const pairs = new Map<string, string>();
+	for (const m of js.matchAll(/"([A-Za-z0-9_]{5,8})","((?:hr|trs|hrs)[a-z0-9.]+)"/g))
+		pairs.set(m[2], m[1]);
+	for (const m of js.matchAll(/"((?:hr|trs|hrs)[a-z0-9.]+)","([A-Za-z0-9_]{5,8})"/g))
+		pairs.set(m[1], m[2]);
+	const out = new Map<string, string[]>();
+	for (const [tag, rpc] of pairs) {
+		const list = out.get(tag) ?? [];
+		if (!list.includes(rpc)) list.push(rpc);
+		out.set(tag, list);
+	}
+	return out;
+}
+
 async function main() {
 	const mode = process.argv[2];
 	console.log(`captures go to ${DIR}`);
@@ -186,8 +229,83 @@ async function main() {
 		save(`subquery-${workId}.txt`, text);
 		const files = await querySubmissionAttachments(jar, a, tokens, workId, courseId);
 		console.log(JSON.stringify({ parsedAttachments: files.length }));
+	} else if (mode === 'subbatch') {
+		// Batched Zj93ge: several work keys in one call (read-only).
+		const a = Number(process.argv[3]);
+		const courseId = String(process.argv[4]);
+		const workIds = String(process.argv[5]).split(',');
+		const tokens = await tokensFor(a);
+		const keys = workIds.map((w) => `[[${w},[${courseId}]]]`).join(',');
+		const text = await rawRpc(
+			a,
+			tokens,
+			'Zj93ge',
+			`[[null,null,2,0],${SUBMISSION_MASK},[null,[${keys}],null]]`,
+			`/u/${a}/c/${encodeCourseId(courseId)}/a/${encodeCourseId(workIds[0])}/details`,
+			subContext(courseId)
+		);
+		save(`subbatch-${courseId}.txt`, text);
+	} else if (mode === 'substudent') {
+		// Zj93ge with the student-keyed submission key (like WriteSubmission's
+		// key framing) — read-only query, several work ids.
+		const a = Number(process.argv[3]);
+		const courseId = String(process.argv[4]);
+		const studentId = String(process.argv[5]);
+		const workIds = String(process.argv[6]).split(',');
+		const tokens = await tokensFor(a);
+		const keys = workIds.map((w) => `[[${studentId},[${w},[${courseId}]]]]`).join(',');
+		const text = await rawRpc(
+			a,
+			tokens,
+			'Zj93ge',
+			`[[null,null,2,0],${SUBMISSION_MASK},[null,[${keys}],null]]`,
+			`/u/${a}/c/${encodeCourseId(courseId)}/a/${encodeCourseId(workIds[0])}/details`,
+			subContext(courseId)
+		);
+		save(`substudent-${courseId}.txt`, text);
+	} else if (mode === 'pagedump') {
+		// Raw HTML of any /u/N Classroom page (to-do, classwork, archive…).
+		// Read-only GET; used to find JS bundle URLs and embedded payloads.
+		const a = Number(process.argv[3]);
+		const path = String(process.argv[4]);
+		const { status, html } = await fetchAny(a, path);
+		save(`page-${path.replace(/[^a-z0-9]+/gi, '_')}.html`, html);
+		console.log(JSON.stringify({ status, bytes: html.length, bundles: bundleUrls(html) }));
+	} else if (mode === 'jsrpc') {
+		// Download the page's JS bundles and extract rpcid↔tag pairs.
+		const a = Number(process.argv[3]);
+		const path = String(process.argv[4] ?? `/u/${a}/h`);
+		const { status, html } = await fetchAny(a, path);
+		console.log(JSON.stringify({ status, bytes: html.length, bundles: bundleUrls(html).length }));
+		const map = new Map<string, string[]>();
+		for (const src of bundleUrls(html)) {
+			const url = src.startsWith('http') ? src : ORIGIN + src;
+			try {
+				const res = await fetch(url, {
+					headers: { 'user-agent': UA, cookie: jar.cookie },
+					signal: AbortSignal.timeout(120_000)
+				});
+				const js = await res.text();
+				if (!res.ok) {
+					console.log(JSON.stringify({ bundle: src.slice(-60), status: res.status }));
+					continue;
+				}
+				for (const [tag, rpcs] of rpcTagPairs(js)) {
+					const list = map.get(tag) ?? [];
+					for (const r of rpcs) if (!list.includes(r)) list.push(r);
+					map.set(tag, list);
+				}
+				console.log(JSON.stringify({ bundle: src.slice(-60), bytes: js.length }));
+			} catch (err) {
+				console.log(JSON.stringify({ bundle: src.slice(-60), error: String(err).slice(0, 100) }));
+			}
+		}
+		const lines = [...map.entries()].sort().map(([tag, rpcs]) => `${tag} ${rpcs.join(' ')}`);
+		save('rpcmap.txt', lines.join('\n') + '\n');
 	} else {
-		throw new Error(`unknown mode ${mode} (slots|courses|streamraw|members|subqueryraw)`);
+		throw new Error(
+			`unknown mode ${mode} (slots|courses|streamraw|members|subqueryraw|subbatch|substudent|pagedump|jsrpc)`
+		);
 	}
 }
 
