@@ -593,6 +593,133 @@ export async function writeSubmissionState(
 	return parseSubmission(payload);
 }
 
+// ---- submission reads (RPC Zj93ge, HomeroomDataService.QuerySubmission) ----
+//
+// The student-side read the to-do pages use: the same query service as
+// querySubmissionAttachments above, but keyed [studentId,[workId,[courseId]]]
+// and batched (the /u/N/a/{not-turned-in,missing,turned-in}/all pages send
+// ~20 keys per call and page by issuing more calls). Captured 2026-11-16 and
+// replayed verbatim; the work-keyed single-key framing this file already had
+// is what earlier grade probes rejected with — the student-keyed framing is
+// what the real pages send.
+//
+// Record shape (indexes into the 33-slot array, probe-verified against the
+// to-do pages' own renders):
+//   0 key [studentId,[workId,[courseId]]], 2/3 ms timestamps, 5 state,
+//   7 [studentId], 8 assigned grade (returned work only, never above the
+//   work's maxPoints), 13 a small count, 16 draft/answer content,
+//   20 substate — for state 2: 3 on time, 4 late; for state 3: 8 on time,
+//   10 late, 5/7 returned without a student turn-in — 21 turn-in ms,
+//   25 rubric criterion grades, 32 unknown flag.
+
+const SUBMISSIONS_RPC = 'Zj93ge';
+
+// Read mask exactly as the to-do pages send it; differs from SUBMISSION_MASK
+// at field 4 (no echo of the write-only fields).
+const SUBMISSIONS_MASK =
+	'[null,1,null,null,1,null,1,1,1,null,null,null,1,null,[1],null,null,null,1,1,1,null,null,null,[[1,1]],[[1,1]],[1,[[1,1,[],[null,1,1]],1,1,1]],null,null,null,null,1]';
+
+// The pages batch ~20 keys per call; 25 keeps request sizes in the observed
+// range while halving the call count for large courses.
+export const SUBMISSIONS_BATCH_SIZE = 25;
+
+export type WebSubmissionRecord = {
+	studentId: string;
+	workId: string;
+	courseId: string;
+	/** REST-style state string, as the store's submissions table expects. */
+	state: 'CREATED' | 'TURNED_IN' | 'RETURNED' | 'RECLAIMED_BY_STUDENT';
+	late: boolean;
+	assignedGrade?: number;
+	/** Turn-in instant, ms epoch, when the record carries one. */
+	turnInAt?: number;
+	/** Last record update, ms epoch. */
+	updatedAt?: number;
+};
+
+export type SubmissionKey = { studentId: string; workId: string; courseId: string };
+
+export function buildSubmissionsArgs(keys: SubmissionKey[]): string {
+	const list = keys.map((k) => `[${k.studentId},[${k.workId},[${k.courseId}]]]`).join(',');
+	// Framing, read mask, keys under [null,null,...], trailing 1 at the args
+	// level — all as captured from the to-do pages.
+	return `[[null,null,1,0],${SUBMISSIONS_MASK},[null,null,[${list}]],1]`;
+}
+
+export function parseSubmissionsPayload(payload: Json): WebSubmissionRecord[] {
+	const out: WebSubmissionRecord[] = [];
+	if (!Array.isArray(payload) || !Array.isArray(payload[2])) return out;
+	for (const record of payload[2]) {
+		if (!Array.isArray(record) || !Array.isArray(record[0])) continue;
+		const [studentId, workWrap] = record[0] as [string, Json];
+		if (typeof studentId !== 'string' || !Array.isArray(workWrap)) continue;
+		const [workId, courseWrap] = workWrap as [string, Json];
+		if (typeof workId !== 'string' || !Array.isArray(courseWrap)) continue;
+		const courseId = courseWrap[0];
+		if (typeof courseId !== 'string') continue;
+		// State field 6 of the record proto, probed 2026-11-16 against the
+		// to-do pages: 2 turned in, 3 returned, 4 assigned, 5 reclaimed.
+		// Substate field 21 (1-based proto numbering): the on-time/late
+		// variants of each state (see the shape comment above).
+		const substate = record[20];
+		let state: WebSubmissionRecord['state'] | undefined;
+		let late = false;
+		if (record[5] === 2) {
+			state = 'TURNED_IN';
+			late = substate === 4;
+		} else if (record[5] === 3) {
+			state = 'RETURNED';
+			late = substate === 10;
+		} else if (record[5] === 4) {
+			state = 'CREATED';
+		} else if (record[5] === 5) {
+			state = 'RECLAIMED_BY_STUDENT';
+		}
+		if (!state) continue;
+		out.push({
+			studentId,
+			workId,
+			courseId,
+			state,
+			late,
+			assignedGrade: typeof record[8] === 'number' ? record[8] : undefined,
+			turnInAt: asMsTimestamp(record[21]),
+			updatedAt: asMsTimestamp(record[2] ?? record[3])
+		});
+	}
+	return out;
+}
+
+export async function fetchSubmissions(
+	jar: CookieJar,
+	authuser: number,
+	tokens: WebTokens,
+	keys: SubmissionKey[],
+	capture?: RawCapture[]
+): Promise<WebSubmissionRecord[]> {
+	const out: WebSubmissionRecord[] = [];
+	// The to-do pages chunk their keys; the payload shape is identical either
+	// way, so chunking here only keeps request sizes in the observed range.
+	for (let i = 0; i < keys.length; i += SUBMISSIONS_BATCH_SIZE) {
+		const chunk = keys.slice(i, i + SUBMISSIONS_BATCH_SIZE);
+		const payload = await callRpc(
+			jar,
+			authuser,
+			tokens,
+			SUBMISSIONS_RPC,
+			buildSubmissionsArgs(chunk),
+			`/u/${authuser}/a/not-turned-in/all`,
+			capture,
+			// The to-do pages send the course-context header the write path
+			// also needs, filled with the first key's course; without it the
+			// RPC answers code 3. Calls may mix courses after that first one.
+			submissionContext(chunk[0].courseId)
+		);
+		out.push(...parseSubmissionsPayload(payload));
+	}
+	return out;
+}
+
 // ---- attachments -----------------------------------------------------------
 //
 // Files go to Drive first through the same resumable upload the web app's

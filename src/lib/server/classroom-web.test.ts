@@ -2,13 +2,15 @@ import { test, expect } from 'bun:test';
 import {
 	buildProfileArgs,
 	buildStreamArgs,
+	buildSubmissionsArgs,
 	encodeCourseId,
 	findHomeRedirect,
 	mergeCookies,
 	parseCourseListPayload,
 	parseMembersPayload,
 	parseProfilesPayload,
-	parseStreamResponse
+	parseStreamResponse,
+	parseSubmissionsPayload
 } from './classroom-web.ts';
 import { parseCoursesHtml, describeHomeHtml } from './course-discovery.ts';
 import type { Json } from './classroom/proto.ts';
@@ -488,4 +490,142 @@ test('skips malformed and duplicate list records', () => {
 	).toEqual(['Kept']);
 	expect(parseCourseListPayload(['hrq.crs', null, []])).toEqual([]);
 	expect(parseCourseListPayload({})).toEqual([]);
+});
+
+// ---- submission reads (Zj93ge, student-keyed batched query) -----------------
+//
+// Shapes captured 2026-11-16 from the /u/N/a/{not-turned-in,missing,
+// turned-in}/all pages; ids redacted to same-length placeholders. Field
+// indexes documented at the parser.
+
+test('builds the student-keyed batched query the to-do pages send', () => {
+	expect(
+		buildSubmissionsArgs([
+			{ studentId: '785201550080', workId: '899335145432', courseId: '876371853259' },
+			{ studentId: '785201550080', workId: '891021569117', courseId: '875952371903' }
+		])
+	).toBe(
+		'[[null,null,1,0],' +
+			'[null,1,null,null,1,null,1,1,1,null,null,null,1,null,[1],null,null,null,1,1,1,' +
+			'null,null,null,[[1,1]],[[1,1]],[1,[[1,1,[],[null,1,1]],1,1,1]],null,null,null,null,1],' +
+			'[null,null,[[785201550080,[899335145432,[876371853259]]],' +
+			'[785201550080,[891021569117,[875952371903]]]]],1]'
+	);
+});
+
+// The trailing 1 is an args-level field, not part of the key wrapper; a copy
+// inside the key wrapper is what made the first replay of this RPC reject.
+test('keeps the trailing flag outside the key wrapper', () => {
+	const args = JSON.parse(buildSubmissionsArgs([{ studentId: '1', workId: '2', courseId: '3' }]));
+	expect(args.length).toBe(4);
+	expect(args[2].length).toBe(3);
+	expect(args[3]).toBe(1);
+});
+
+test('parses submission records with states, grades and the late substate', () => {
+	const rec = (over: Record<number, Json>) => {
+		const r: Json[] = new Array(33).fill(null);
+		r[0] = ['785201550080', ['899335145432', ['876371853259']]];
+		r[2] = 1794586353333;
+		r[7] = ['785201550080'];
+		return Object.assign(r, over);
+	};
+	expect(
+		parseSubmissionsPayload([
+			'hrq.sub',
+			[false],
+			[
+				// assigned
+				rec({ 5: 4, 13: 0, 20: 1, 32: 1 }),
+				// turned in on time
+				rec({ 5: 2, 13: 0, 20: 3, 21: 1794338431882, 32: 1 }),
+				// turned in late
+				rec({ 5: 2, 13: 0, 20: 4, 21: 1793370827098, 32: 1 }),
+				// returned with a grade, on time
+				rec({ 5: 3, 13: 0, 20: 8, 21: 1793899844377, 8: 39.5, 32: 4 }),
+				// returned late
+				rec({ 5: 3, 13: 1, 20: 10, 21: 1793650180158, 8: 14.5, 32: 1 }),
+				// returned without a student turn-in (substate 5)
+				rec({ 5: 3, 13: 0, 20: 5, 8: 2, 32: 3 }),
+				// reclaimed (state seen on live captures)
+				rec({ 5: 5, 13: 0, 20: 1, 32: 1 }),
+				// unknown state is skipped, not guessed
+				rec({ 5: 9, 20: 1 })
+			]
+		])
+	).toEqual([
+		{
+			studentId: '785201550080',
+			workId: '899335145432',
+			courseId: '876371853259',
+			state: 'CREATED',
+			late: false,
+			assignedGrade: undefined,
+			turnInAt: undefined,
+			updatedAt: 1794586353333
+		},
+		{
+			studentId: '785201550080',
+			workId: '899335145432',
+			courseId: '876371853259',
+			state: 'TURNED_IN',
+			late: false,
+			assignedGrade: undefined,
+			turnInAt: 1794338431882,
+			updatedAt: 1794586353333
+		},
+		{
+			studentId: '785201550080',
+			workId: '899335145432',
+			courseId: '876371853259',
+			state: 'TURNED_IN',
+			late: true,
+			assignedGrade: undefined,
+			turnInAt: 1793370827098,
+			updatedAt: 1794586353333
+		},
+		{
+			studentId: '785201550080',
+			workId: '899335145432',
+			courseId: '876371853259',
+			state: 'RETURNED',
+			late: false,
+			assignedGrade: 39.5,
+			turnInAt: 1793899844377,
+			updatedAt: 1794586353333
+		},
+		{
+			studentId: '785201550080',
+			workId: '899335145432',
+			courseId: '876371853259',
+			state: 'RETURNED',
+			late: true,
+			assignedGrade: 14.5,
+			turnInAt: 1793650180158,
+			updatedAt: 1794586353333
+		},
+		{
+			studentId: '785201550080',
+			workId: '899335145432',
+			courseId: '876371853259',
+			state: 'RETURNED',
+			late: false,
+			assignedGrade: 2,
+			turnInAt: undefined,
+			updatedAt: 1794586353333
+		},
+		{
+			studentId: '785201550080',
+			workId: '899335145432',
+			courseId: '876371853259',
+			state: 'RECLAIMED_BY_STUDENT',
+			late: false,
+			assignedGrade: undefined,
+			turnInAt: undefined,
+			updatedAt: 1794586353333
+		}
+	]);
+	expect(parseSubmissionsPayload(['hrq.sub', [false], []])).toEqual([]);
+	expect(parseSubmissionsPayload(['hrq.sub', [false], ['garbage', null]])).toEqual([]);
+	expect(parseSubmissionsPayload({})).toEqual([]);
 });

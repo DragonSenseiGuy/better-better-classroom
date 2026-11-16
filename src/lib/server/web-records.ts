@@ -12,9 +12,12 @@
 //   per-item attachment URLs still need another RPC, and material posts carry
 //   no attachments yet.
 // - people: members + profiles RPCs, same as enrichment.
-// - submissions/grades: NOT available. The web QuerySubmission RPC rejects
-//   replays from this session, so the grades tab stays empty in session mode.
-//   Turn-in / reclaim still works through the web session (enrich path).
+// - submissions: the student-keyed Zj93ge query the to-do pages use,
+//   batched per course: state (assigned / turned in / returned / reclaimed),
+//   late flag, turn-in time and the assigned grade. That fills the grades
+//   tab and the to-do states in session mode. Per-submission attachments
+//   stay on the enrich path (querySubmissionAttachments), as before.
+//   Turn-in / reclaim also work through the web session (enrich path).
 //
 // Registration order in hooks keeps Apps Script primary: this provider only
 // serves when no script connection is saved.
@@ -22,6 +25,7 @@
 import {
 	SessionError,
 	encodeCourseId,
+	fetchSubmissions,
 	writeSubmissionState,
 	type StreamItem
 } from './classroom-web';
@@ -49,6 +53,7 @@ import type {
 	RawLookup,
 	RawMaterial,
 	RawOverview,
+	RawSubmission,
 	RawSubmissionAction,
 	RawTeacher
 } from './providers';
@@ -154,12 +159,16 @@ const dueParts = (dueAt?: number) => {
 async function courseContent(
 	courseId: string,
 	since: number,
-	_wantSubmissions: boolean
+	wantSubmissions: boolean
 ): Promise<RawCourseContent> {
 	const session = requireSession();
 	const announcements: RawAnnouncement[] = [];
 	const courseWork: RawCourseWork[] = [];
 	const materials: RawMaterial[] = [];
+	// Every coursework id the stream showed, kept even when the since filter
+	// drops it: the submission read below wants all of the course's work so
+	// grades and states stay current between full syncs.
+	const workIds: string[] = [];
 	// No early break on `since`: stream ordering isn't established as
 	// creation-descending, so stopping at the first stale item could drop
 	// content. Filter on creation time instead; edits to existing posts
@@ -173,7 +182,8 @@ async function courseContent(
 			// Both lack per-item attachment URLs in the stream — coursework
 			// exposes only its auto-created Drive folder, and material
 			// attachments are referenced by id and need another RPC.
-			if (item.kind === 'courseWork')
+			if (item.kind === 'courseWork') {
+				workIds.push(item.id);
 				courseWork.push({
 					...postBase(courseId, item, `a/${item.id}/details`),
 					...(item.driveFolderUrl
@@ -189,22 +199,66 @@ async function courseContent(
 					maxPoints: item.maxPoints,
 					topicId: item.topicId
 				});
-			else if (item.kind === 'material')
+			} else if (item.kind === 'material') {
 				materials.push({
 					...postBase(courseId, item, `m/${item.id}`),
 					title: postTitle(item),
 					description: item.text,
 					topicId: item.topicId
 				});
+			}
 			// Announcements are the default bucket: the classifier only
 			// returns courseWork or material on a positive wrapper signal.
 			else announcements.push({ ...postBase(courseId, item, `p/${item.id}`), text: item.text });
 		}
 	}
+	// Submissions come from the student-keyed Zj93ge query the to-do pages
+	// use (see fetchSubmissions). A failure leaves the course's grades stale
+	// but shouldn't take the whole content pass down, so it degrades to an
+	// error entry the sync reports like any other.
+	let submissions: RawSubmission[] = [];
+	const errors: Record<string, string> = {};
+	if (wantSubmissions && workIds.length > 0) {
+		try {
+			const { session: web, studentId, jar, tokens } = await withWebStudent();
+			const records = await fetchSubmissions(
+				jar,
+				web.authuser,
+				tokens,
+				workIds.map((workId) => ({ studentId, workId, courseId }))
+			);
+			submissions = records.map((r) => ({
+				// Deterministic per (work, student); the store keys rows by id
+				// and submissionAction echoes it back unchanged.
+				id: `${r.workId}:${r.studentId}`,
+				courseWorkId: r.workId,
+				state: r.state,
+				late: r.late,
+				assignedGrade: r.assignedGrade,
+				alternateLink: `${courseUrl(courseId)}/a/${r.workId}/details`,
+				courseWorkType: 'ASSIGNMENT',
+				...(r.updatedAt
+					? {
+							creationTime: new Date(r.updatedAt).toISOString(),
+							updateTime: new Date(r.updatedAt).toISOString()
+						}
+					: {}),
+				attachments: []
+			}));
+		} catch (err) {
+			errors.submissions = err instanceof Error ? err.message : String(err);
+		}
+	}
 	// materials is a real list now, but still empty for material posts whose
-	// attachments need another RPC; submissions stays the same (grades are
-	// not in any mapped session RPC).
-	return { partial: since > 0, announcements, courseWork, materials, submissions: [] };
+	// attachments need another RPC.
+	return {
+		partial: since > 0,
+		announcements,
+		courseWork,
+		materials,
+		submissions,
+		...(Object.keys(errors).length > 0 ? { errors } : {})
+	};
 }
 
 async function lookup(courseId: string, users: string[]): Promise<RawLookup> {
