@@ -61,6 +61,12 @@
 	});
 
 	const table = createTodoTable(() => rows);
+	// Done reads newest-first, like Classroom's own done list; the other
+	// views stay due-date ascending. Reactive so a ?filter=done deep link
+	// gets the same order.
+	$effect(() => {
+		table.setSorting([{ id: 'dueAt', desc: filter === 'done' }]);
+	});
 	const sortedRows = $derived(table.getRowModel().rows);
 	const selection = createSelection(() => sortedRows.map((r) => r.id));
 	const selectedRows = $derived(
