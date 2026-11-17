@@ -3,9 +3,7 @@
 	import { Button } from '#lib/components/ui/button/index.js';
 	import LoaderIcon from '@lucide/svelte/icons/loader-circle';
 
-	let {
-		expired
-	}: { expired: { savedAt: number; detail?: string } | null } = $props();
+	let { expired }: { expired: { savedAt: number; detail?: string } | null } = $props();
 
 	// Dismiss once per expired savedAt: reopen on every app load while the
 	// same dead cookie is saved, stay closed after a fresh save reloads.
@@ -21,8 +19,7 @@
 	}
 
 	type SessionResponse =
-		| { ok: true; email?: string; savedAt?: number }
-		| { ok: false; code?: string; message?: string };
+		{ ok: true; email?: string; savedAt?: number } | { ok: false; code?: string; message?: string };
 
 	async function reconnect() {
 		if (!cookie.trim() || pending) return;
@@ -88,7 +85,10 @@
 				Browse offline
 			</Button>
 			<Button type="button" onclick={reconnect} disabled={pending || !cookie.trim()}>
-				{#if pending}<LoaderIcon data-icon="inline-start" class="animate-spin" />Reconnecting{:else}Reconnect{/if}
+				{#if pending}<LoaderIcon
+						data-icon="inline-start"
+						class="animate-spin"
+					/>Reconnecting{:else}Reconnect{/if}
 			</Button>
 		</Dialog.Footer>
 	</Dialog.Content>

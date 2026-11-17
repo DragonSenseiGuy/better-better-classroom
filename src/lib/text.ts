@@ -17,5 +17,5 @@ export function greeting(now = new Date()) {
 	// if (h < 12) return 'Good morning';
 	// if (h < 18) return 'Good afternoon';
 	// return 'Good evening';
-	return "G'day"
+	return "G'day";
 }

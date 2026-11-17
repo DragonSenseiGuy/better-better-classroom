@@ -5,12 +5,7 @@ import {
 	GOOGLE_CLIENT_SECRET
 } from '$app/env/private';
 import { config } from './config';
-import {
-	createAuth,
-	hasGoogleLogin as hasGoogle,
-	type Auth,
-	type AuthEnv
-} from './auth-config';
+import { createAuth, hasGoogleLogin as hasGoogle, type Auth, type AuthEnv } from './auth-config';
 
 const env: AuthEnv = {
 	BETTER_AUTH_SECRET,

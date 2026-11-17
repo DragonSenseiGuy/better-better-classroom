@@ -82,7 +82,15 @@ async function listSlots(
 			} catch {
 				/* keep the signed-in slot; courses stays empty */
 			}
-			slots.push({ authuser, tokens, email: tokens.email, html, path, diag: describeHomeHtml(html), courses });
+			slots.push({
+				authuser,
+				tokens,
+				email: tokens.email,
+				html,
+				path,
+				diag: describeHomeHtml(html),
+				courses
+			});
 		} catch (err) {
 			slots.push({ authuser, error: errorMessage(err) });
 			if (isSlotExhausted(err)) break;
@@ -112,10 +120,15 @@ export function chooseSlotWithCourses(slots: SlotProbe[]): SlotProbe | undefined
  * slot usually signs in fine but holds no courses, which used to surface
  * later as "no courses were found on the Classroom home page").
  */
-export async function probeSessionBase(
-	cookie: string
-): Promise<
-	| { ok: true; authuser: number; email?: string; cookie: string; courseCount: number; code?: undefined }
+export async function probeSessionBase(cookie: string): Promise<
+	| {
+			ok: true;
+			authuser: number;
+			email?: string;
+			cookie: string;
+			courseCount: number;
+			code?: undefined;
+	  }
 	| { ok: false; message: string; code: string }
 > {
 	const { jar, slots } = await listSlots(cookie);
@@ -123,7 +136,13 @@ export async function probeSessionBase(
 	if (hit?.tokens) {
 		const courseCount = hit.courses?.length ?? 0;
 		if (courseCount > 0)
-			return { ok: true, authuser: hit.authuser, email: hit.email, cookie: jar.cookie, courseCount };
+			return {
+				ok: true,
+				authuser: hit.authuser,
+				email: hit.email,
+				cookie: jar.cookie,
+				courseCount
+			};
 		const fmt = (s: SlotProbe) => {
 			const d = s.diag;
 			const shape = d

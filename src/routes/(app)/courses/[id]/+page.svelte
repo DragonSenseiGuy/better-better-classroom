@@ -64,9 +64,7 @@
 	// empty courses don't loop. Retry resets the key below.
 	let fetchedFor = $state<string | null>(null);
 	const loadingArchived = $derived(course ? loadingFor === course.id : false);
-	const archivedError = $derived(
-		course && errorFor?.id === course.id ? errorFor.message : null
-	);
+	const archivedError = $derived(course && errorFor?.id === course.id ? errorFor.message : null);
 
 	async function ensureArchivedContent(id: string) {
 		if (fetchedFor === id || loadingFor === id) return;
@@ -214,7 +212,9 @@
 		{/if}
 	</div>
 	{#if isArchivedView}
-		<div class="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground">
+		<div
+			class="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground"
+		>
 			{#if loadingArchived}
 				<LoaderIcon class="size-4 animate-spin" />
 				<span>Loading archived content…</span>
