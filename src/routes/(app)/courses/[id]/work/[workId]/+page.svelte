@@ -3,6 +3,7 @@
 	import { useLiveQuery, eq } from '@tanstack/svelte-db';
 	import { courses, courseWork, submissions } from '#lib/db/collections.ts';
 	import { postAttachments } from '#lib/api.ts';
+	import { hasRealMaterials } from '#lib/shared/attachments.ts';
 	import type { Attachment } from '#lib/shared/types.ts';
 	import { topicById } from '#lib/db/queries.ts';
 	import { gradePercent, statusLabel, summarize } from '#lib/work.ts';
@@ -56,7 +57,10 @@
 		if (
 			!limited ||
 			!current ||
-			current.materials.length > 0 ||
+			// A coursework row's only material may be the auto-created Drive
+			// folder the stream carries; that is not a reason to skip the
+			// details fetch — its real attachments load only here.
+			hasRealMaterials(current.materials) ||
 			!current.courseId ||
 			extraMaterialsFor === current.id
 		)

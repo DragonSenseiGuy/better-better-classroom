@@ -25,6 +25,7 @@ import {
 	withWebStudent
 } from './web-session';
 import { errorMessage } from './http';
+import { hasRealMaterials, isDriveFolder } from '#lib/shared/attachments.ts';
 import { isVisible } from '#lib/course.ts';
 import {
 	findPost,
@@ -217,9 +218,10 @@ async function backfillPostAttachments(
 		for (const row of listAll(table)) {
 			seen.add(row.id);
 			if (!courseIds.has(row.courseId)) continue;
-			// Coursework rows may already carry their auto-created Drive
-			// folder from the stream; only fill posts with no materials.
-			if (row.materials.length > 0) continue;
+			// Coursework rows carry their auto-created Drive folder from the
+			// stream; that alone is not attachments. Fill posts with no real
+			// materials and keep the folder chip in the write below.
+			if (hasRealMaterials(row.materials)) continue;
 			if (tried[row.id] && now - tried[row.id] < BACKFILL_RETRY_MS) continue;
 			candidates.push({ table, row });
 		}
@@ -245,7 +247,12 @@ async function backfillPostAttachments(
 		tried[row.id] = Date.now();
 		try {
 			const found = await fetchWorkAttachments(jar, session.authuser, tokens, row.id, row.courseId);
-			const change = setPostExtras(table, row, { materials: found.map(toAttachment) });
+			// Keep the stream's Drive folder chip ahead of the details
+			// attachments; Classroom shows the folder on the post too.
+			const folders = row.materials.filter(isDriveFolder);
+			const change = setPostExtras(table, row, {
+				materials: [...folders, ...found.map(toAttachment)]
+			});
 			if (!change) continue;
 			(grouped[table] ??= []).push(change);
 			updated++;

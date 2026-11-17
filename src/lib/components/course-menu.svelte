@@ -57,7 +57,7 @@
 		<ContextMenu.Item onSelect={hide}><EyeOffIcon />Hide course</ContextMenu.Item>
 		{#if course.alternateLink}
 			<ContextMenu.Separator />
-			<ContextMenu.Item onSelect={() => window.open(course.alternateLink, '_blank', 'noreferrer')}
+			<ContextMenu.Item onSelect={() => window.open(course.alternateLink, '_blank')}
 				><ExternalLinkIcon />Open in Classroom</ContextMenu.Item
 			>
 		{/if}
