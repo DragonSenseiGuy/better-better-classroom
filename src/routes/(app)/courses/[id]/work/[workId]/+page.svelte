@@ -43,8 +43,8 @@
 		teacherName ? `Add comment to ${teacherName}…` : 'Add a private comment for your teacher…'
 	);
 	// Session-only sync maps due dates, points, submission states, grades and
-	// topic names; per-item attachment URLs are not in the stream, so detail
-	// pages fetch them on open (one call per post, by design).
+	// topic names; per-item attachment URLs are backfilled by the sync walk,
+	// and this page fetches them itself for posts not yet reached.
 	const limited = $derived(page.data.snapshot.source !== 'apps-script');
 	// Material attachments live in a separate details RPC the stream does not
 	// carry, so in session mode we fetch them for this post on open. Apps

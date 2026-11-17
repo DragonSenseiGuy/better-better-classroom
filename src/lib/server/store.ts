@@ -1,5 +1,6 @@
 import { db } from './db';
 import type {
+	Attachment,
 	Author,
 	Change,
 	CollectionName,
@@ -104,8 +105,8 @@ export function saveRichStatus(status: RichStatus) {
 	setMeta('richStatus', status);
 }
 
-type RichTable = 'courseWork' | 'materials' | 'announcements';
-const RICH_TABLES: RichTable[] = ['announcements', 'courseWork', 'materials'];
+export type RichTable = 'courseWork' | 'materials' | 'announcements';
+export const RICH_TABLES: RichTable[] = ['announcements', 'courseWork', 'materials'];
 
 export function findPost(id: string): { table: RichTable; row: RowOf[RichTable] } | null {
 	for (const table of RICH_TABLES) {
@@ -118,11 +119,12 @@ export function findPost(id: string): { table: RichTable; row: RowOf[RichTable] 
 export function setPostExtras<K extends RichTable>(
 	table: K,
 	row: RowOf[K],
-	extras: { html?: string; author?: Author }
+	extras: { html?: string; author?: Author; materials?: Attachment[] }
 ): Change<RowOf[K]> | null {
 	const next = { ...row };
 	if (extras.html !== undefined) next.html = extras.html;
 	if (extras.author !== undefined) next.author = extras.author;
+	if (extras.materials !== undefined) next.materials = extras.materials;
 	if (stable(next) === stable(row)) return null;
 	db().query(`UPDATE ${table} SET data = ? WHERE id = ?`).run(JSON.stringify(next), row.id);
 	return { type: 'update', key: row.id, value: next };
@@ -134,10 +136,24 @@ export function setCourseStudents(courseId: string, students: Author[], studentC
 
 export type WebProfiles = Record<string, Author>;
 
-export const getWebProfiles = () => getMeta<WebProfiles>('webProfiles') ?? {};
-
 export function saveWebProfiles(profiles: WebProfiles) {
 	setMeta('webProfiles', profiles);
+}
+
+export const getWebProfiles = () => getMeta<WebProfiles>('webProfiles') ?? {};
+
+/**
+ * Posts whose attachments the backfill already attempted, keyed by post id
+ * with the attempt time. Successes and failures both count: the detail RPC
+ * is one call per post, so an entry stops re-probing (failures retry only
+ * after the cooldown, and the detail page still fetches on open).
+ */
+export type AttachmentTried = Record<string, number>;
+
+export const getAttachmentTried = () => getMeta<AttachmentTried>('webAttachmentTried') ?? {};
+
+export function saveAttachmentTried(map: AttachmentTried) {
+	setMeta('webAttachmentTried', map);
 }
 
 export function getProfile() {

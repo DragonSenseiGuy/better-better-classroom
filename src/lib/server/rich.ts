@@ -11,6 +11,7 @@ import {
 	writeComment,
 	writeSubmissionState,
 	type WebComment,
+	type WebPostAttachment,
 	type StreamItem
 } from './classroom-web';
 import {
@@ -19,6 +20,7 @@ import {
 	fetchCoursePeople,
 	iterateCourseStream,
 	sessionJar,
+	sessionTokens,
 	toAuthor,
 	withWebStudent
 } from './web-session';
@@ -26,15 +28,19 @@ import { errorMessage } from './http';
 import { isVisible } from '#lib/course.ts';
 import {
 	findPost,
+	getAttachmentTried,
 	getKeepAlive,
 	getRichStatus,
 	getWebProfiles,
 	getWebSession,
 	listAll,
+	RICH_TABLES,
+	saveAttachmentTried,
 	saveKeepAlive,
 	saveRichStatus,
 	setCourseStudents,
 	setPostExtras,
+	type RichTable,
 	type WebSession
 } from './store';
 import type { Provider, Publish } from './providers';
@@ -45,6 +51,7 @@ import type {
 	CollectionName,
 	Comment,
 	RichStatus,
+	RowOf,
 	SubmissionFile
 } from '#lib/shared/types.ts';
 
@@ -162,6 +169,12 @@ async function walk(session: WebSession, full: boolean, publish: Publish): Promi
 			errors.push(`${course.name}: ${errorMessage(err)}`);
 		}
 	}
+	try {
+		updated += await backfillPostAttachments(ctx, new Set(courses.map((c) => c.id)), errors);
+	} catch (err) {
+		if (err instanceof SessionError) return failure(err, session);
+		errors.push(`Post attachments: ${errorMessage(err)}`);
+	}
 	return {
 		ok: errors.length === 0,
 		message: errors.length ? errors.join('\n') : undefined,
@@ -180,6 +193,81 @@ async function syncCourseStream(ctx: Ctx, courseId: string, full: boolean): Prom
 	}
 	return updated;
 }
+
+// The stream carries attachment references by id only, so every post's
+// materials need the one-call-per-post detail query (t51ITc rejects
+// batching). Record syncs leave materials empty and detail pages fetch on
+// open; this pass backfills a bounded slice per tick so cards show chips
+// without opening the post. Failures retry after a cooldown rather than
+// every tick.
+const BACKFILL_PER_TICK = 16;
+const BACKFILL_RETRY_MS = 24 * 60 * 60_000;
+const BACKFILL_ERROR_LINES = 5;
+
+async function backfillPostAttachments(
+	ctx: Ctx,
+	courseIds: Set<string>,
+	errors: string[]
+): Promise<number> {
+	const tried = getAttachmentTried();
+	const now = Date.now();
+	const candidates: { table: RichTable; row: RowOf[RichTable] }[] = [];
+	const seen = new Set<string>();
+	for (const table of RICH_TABLES) {
+		for (const row of listAll(table)) {
+			seen.add(row.id);
+			if (!courseIds.has(row.courseId)) continue;
+			// Coursework rows may already carry their auto-created Drive
+			// folder from the stream; only fill posts with no materials.
+			if (row.materials.length > 0) continue;
+			if (tried[row.id] && now - tried[row.id] < BACKFILL_RETRY_MS) continue;
+			candidates.push({ table, row });
+		}
+	}
+	// Attempt entries for posts that no longer exist only pile up; prune
+	// them on the same scan that reads the tables.
+	const stale = Object.keys(tried).filter((id) => !seen.has(id));
+	for (const id of stale) delete tried[id];
+	if (stale.length) saveAttachmentTried(tried);
+
+	// Newest first: recent posts matter most in the feed.
+	candidates.sort((a, b) => (b.row.createdAt ?? 0) - (a.row.createdAt ?? 0));
+	const batch = candidates.slice(0, BACKFILL_PER_TICK);
+	if (batch.length === 0) return 0;
+
+	const { session } = ctx;
+	const jar = sessionJar(session);
+	const tokens = await sessionTokens(session);
+	const grouped: Record<string, Change[]> = {};
+	let updated = 0;
+	let failed = 0;
+	for (const { table, row } of batch) {
+		tried[row.id] = Date.now();
+		try {
+			const found = await fetchWorkAttachments(jar, session.authuser, tokens, row.id, row.courseId);
+			const change = setPostExtras(table, row, { materials: found.map(toAttachment) });
+			if (!change) continue;
+			(grouped[table] ??= []).push(change);
+			updated++;
+		} catch (err) {
+			if (err instanceof SessionError) throw err;
+			// One bad post must not starve the rest of the batch; its entry
+			// in `tried` holds the cooldown until the next retry window.
+			if (failed++ < BACKFILL_ERROR_LINES) errors.push(`Post ${row.id}: ${errorMessage(err)}`);
+		}
+	}
+	saveAttachmentTried(tried);
+	for (const [table, changes] of Object.entries(grouped))
+		ctx.publish(table as CollectionName, changes);
+	return updated;
+}
+
+const toAttachment = (a: WebPostAttachment): Attachment => ({
+	type: 'drive',
+	...(a.title ? { title: a.title } : {}),
+	...(a.url ? { url: a.url } : {}),
+	...(a.thumbnailUrl ? { thumbnailUrl: a.thumbnailUrl } : {})
+});
 
 function failure(err: unknown, session: WebSession): RichStatus {
 	const expired = err instanceof SessionError;
@@ -370,8 +458,9 @@ async function removeWebClassComment(courseId: string, workId: string, commentId
 }
 
 // Attachments on the post itself. The stream references them by id only;
-// this is the one-call-per-post details query, so it runs when a detail
-// page opens, never during sync.
+// this is the one-call-per-post details query, so sync backfills it in
+// bounded slices per tick (see backfillPostAttachments) and detail pages
+// use it on demand for anything not yet backfilled.
 async function fetchPostAttachments(courseId: string, workId: string): Promise<Attachment[]> {
 	const { session, jar, tokens } = await withWebStudent();
 	const found = await fetchWorkAttachments(jar, session.authuser, tokens, workId, courseId);

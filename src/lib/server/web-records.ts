@@ -10,9 +10,9 @@
 //   are best-effort; due dates, max points, topic ids and the per-assignment
 //   Drive folder are mapped from the stream (probe-verified), and topic
 //   names come from the ZZFlc list query. Per-item attachment URLs are not
-//   in the stream; detail pages fetch them on open via t51ITc (one call per
-//   post — it rejects batching), and material posts carry no attachments in
-//   this source yet.
+//   in the stream; the enrichment walk backfills them a slice per tick via
+//   t51ITc (one call per post — it rejects batching), and material posts
+//   carry no attachments in this source yet.
 // - people: members + profiles RPCs, same as enrichment.
 // - submissions: the student-keyed Zj93ge query the to-do pages use,
 //   batched per course: state (assigned / turned in / returned / reclaimed),
