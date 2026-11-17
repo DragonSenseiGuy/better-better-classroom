@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Button } from '#lib/components/ui/button/index.js';
-	import LoaderIcon from '@lucide/svelte/icons/loader-circle';
+	import { ProgressActivity as LoaderIcon } from '@material-symbols-svg/svelte/rounded/icons/progress-activity';
 
 	interface Props {
 		cookie: string;

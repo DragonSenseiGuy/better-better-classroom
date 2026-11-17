@@ -1,48 +1,48 @@
 <script lang="ts">
 	import * as Sidebar from '#lib/components/ui/sidebar/index.js';
-	import UserAvatar from '#lib/components/user-avatar.svelte';
-	import { Kbd, KbdGroup } from '#lib/components/ui/kbd/index.js';
 	import { page } from '$app/state';
 	import { afterNavigate } from '$app/navigation';
 	import { browser } from '$app/env';
-	import { displayName, type CourseRef as Course } from '#lib/course.ts';
+	import { courseLabel, displayName, type CourseRef as Course } from '#lib/course.ts';
 	import { loadArchivedOpen, saveArchivedOpen } from '#lib/sidebar-prefs.ts';
 	import { cn } from '#lib/utils.js';
 	import { createCourseOrder, type OrderSection } from '#lib/course-reorder.svelte.ts';
-	import CourseDot from '#lib/components/course-dot.svelte';
+	import CourseAvatar from '#lib/components/course-avatar.svelte';
 	import CourseMenu from '#lib/components/course-menu.svelte';
 	import { editCourse } from '#lib/course-editor.svelte.ts';
-	import HouseIcon from '@lucide/svelte/icons/house';
-	import ListChecksIcon from '@lucide/svelte/icons/list-checks';
-	import CalendarDaysIcon from '@lucide/svelte/icons/calendar-days';
-	import InboxIcon from '@lucide/svelte/icons/inbox';
-	import SearchIcon from '@lucide/svelte/icons/search';
-	import SettingsIcon from '@lucide/svelte/icons/settings';
-	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
-	import ArchiveIcon from '@lucide/svelte/icons/archive';
-	import GripVerticalIcon from '@lucide/svelte/icons/grip-vertical';
-
-	type Profile = { name?: string; email?: string; photoUrl?: string } | null;
+	import { Home as HomeIcon, HomeFill } from '@material-symbols-svg/svelte/rounded/icons/home';
+	import { Inbox as InboxIcon, InboxFill } from '@material-symbols-svg/svelte/rounded/icons/inbox';
+	import {
+		AssignmentTurnedIn as TodoIcon,
+		AssignmentTurnedInFill as TodoFill
+	} from '@material-symbols-svg/svelte/rounded/icons/assignment-turned-in';
+	import {
+		CalendarMonth as CalendarIcon,
+		CalendarMonthFill
+	} from '@material-symbols-svg/svelte/rounded/icons/calendar-month';
+	import {
+		Settings as SettingsIcon,
+		SettingsFill
+	} from '@material-symbols-svg/svelte/rounded/icons/settings';
+	import { School as SchoolIcon } from '@material-symbols-svg/svelte/rounded/icons/school';
+	import { Archive as ArchiveIcon } from '@material-symbols-svg/svelte/rounded/icons/archive';
+	import { KeyboardArrowDown as ChevronDownIcon } from '@material-symbols-svg/svelte/rounded/icons/keyboard-arrow-down';
+	import { DragIndicator as GripIcon } from '@material-symbols-svg/svelte/rounded/icons/drag-indicator';
 
 	let {
 		courses,
 		archivedCourses = [],
-		profile,
-		onSearch,
 		inboxCount = 0,
 		todoCount = 0
 	}: {
 		courses: Course[];
 		archivedCourses?: Course[];
-		profile: Profile;
-		onSearch: () => void;
 		inboxCount?: number;
 		todoCount?: number;
 	} = $props();
 
 	const sidebar = Sidebar.useSidebar();
 	afterNavigate(() => sidebar.setOpenMobile(false));
-	const closeOnMobile = () => sidebar.isMobile && sidebar.setOpenMobile(false);
 
 	const order = createCourseOrder(
 		() => courses,
@@ -50,13 +50,20 @@
 	);
 
 	const nav = $derived([
-		{ href: '/', label: 'Home', icon: HouseIcon, count: 0 },
-		{ href: '/inbox', label: 'Inbox', icon: InboxIcon, count: inboxCount },
-		{ href: '/todo', label: 'To-do', icon: ListChecksIcon, count: todoCount },
-		{ href: '/calendar', label: 'Calendar', icon: CalendarDaysIcon, count: 0 }
+		{ href: '/', label: 'Home', icon: HomeIcon, active: HomeFill, count: 0 },
+		{ href: '/inbox', label: 'Inbox', icon: InboxIcon, active: InboxFill, count: inboxCount },
+		{ href: '/todo', label: 'To-do', icon: TodoIcon, active: TodoFill, count: todoCount },
+		{
+			href: '/calendar',
+			label: 'Calendar',
+			icon: CalendarIcon,
+			active: CalendarMonthFill,
+			count: 0
+		}
 	]);
 	const isActive = (href: string) =>
 		href === '/' ? page.url.pathname === '/' : page.url.pathname.startsWith(href);
+	const settingsActive = $derived(page.url.pathname.startsWith('/settings'));
 
 	// Archived starts minimized; the last toggle choice persists across reloads.
 	let archivedOpen = $state(browser ? loadArchivedOpen(localStorage) : false);
@@ -80,6 +87,7 @@
 	{#each rows as course, index (course.id)}
 		{@const isDragging = order.dragId === course.id}
 		{@const isOver = order.overId === course.id && order.dragSection === section}
+		{@const label = courseLabel(course.section)}
 		<Sidebar.MenuItem
 			class={cn('flex items-center gap-0.5', isDragging && 'opacity-50')}
 			ondragover={(e) => order.dragOver(section, course.id, e)}
@@ -103,7 +111,7 @@
 				title="Drag to reorder"
 				aria-label={`Reorder ${displayName(course)}. Press arrow keys to move.`}
 				aria-grabbed={isDragging}
-				class="flex shrink-0 cursor-grab touch-none items-center justify-center rounded p-0.5 text-sidebar-foreground/40 opacity-60 transition-opacity focus-visible:opacity-100 active:cursor-grabbing md:opacity-0 md:group-hover/menu-item:opacity-100 md:focus-visible:opacity-100 [&_svg]:size-3.5"
+				class="flex size-6 shrink-0 cursor-grab touch-none items-center justify-center rounded-full text-on-surface-variant opacity-60 transition-opacity focus-visible:opacity-100 active:cursor-grabbing md:opacity-0 md:group-hover/menu-item:opacity-100 md:focus-visible:opacity-100 [&_svg]:size-4"
 				ondragstart={(e) => order.dragStart(section, course.id, e)}
 				ondragend={order.dragEnd}
 				onkeydown={(e) => {
@@ -116,7 +124,7 @@
 					}
 				}}
 			>
-				<GripVerticalIcon />
+				<GripIcon />
 			</span>
 			<div class="min-w-0 flex-1">
 				<CourseMenu
@@ -126,6 +134,8 @@
 					onMoveDown={index < rows.length - 1 ? () => order.move(section, course.id, 1) : undefined}
 				>
 					<Sidebar.MenuButton
+						size="lg"
+						class="pl-3"
 						isActive={page.url.pathname.startsWith(`/courses/${course.id}`)}
 						tooltipContent={displayName(course)}
 					>
@@ -137,8 +147,17 @@
 								ondragstart={(e) => e.preventDefault()}
 								class:opacity-70={dimmed}
 							>
-								<CourseDot id={course.id} size="md" class="shrink-0" />
-								<span>{displayName(course)}</span>
+								<CourseAvatar
+									id={course.id}
+									name={displayName(course)}
+									class="size-8! text-label-lg"
+								/>
+								<span class="grid min-w-0 leading-tight">
+									<span class="truncate">{displayName(course)}</span>
+									{#if label}<span class="truncate text-label-md font-normal opacity-80"
+											>{label}</span
+										>{/if}
+								</span>
 							</a>
 						{/snippet}
 					</Sidebar.MenuButton>
@@ -149,43 +168,35 @@
 {/snippet}
 
 <Sidebar.Root collapsible="offcanvas">
-	<Sidebar.Content>
+	<Sidebar.Content class="pt-2">
 		<Sidebar.Group>
 			<Sidebar.GroupContent>
-				<Sidebar.Menu>
-					<Sidebar.MenuItem>
-						<Sidebar.MenuButton
-							onclick={() => {
-								closeOnMobile();
-								onSearch();
-							}}
-						>
-							<SearchIcon />
-							<span>Search</span>
-							<KbdGroup class="ml-auto"><Kbd>⌘</Kbd><Kbd>K</Kbd></KbdGroup>
-						</Sidebar.MenuButton>
-					</Sidebar.MenuItem>
+				<Sidebar.Menu class="gap-0.5">
 					{#each nav as item (item.href)}
+						{@const active = isActive(item.href)}
 						<Sidebar.MenuItem>
-							<Sidebar.MenuButton isActive={isActive(item.href)}>
+							<Sidebar.MenuButton isActive={active}>
 								{#snippet child({ props })}
-									<a href={item.href} {...props}><item.icon /><span>{item.label}</span></a>
+									<a href={item.href} {...props}>
+										{#if active}<item.active />{:else}<item.icon />{/if}
+										<span>{item.label}</span>
+									</a>
 								{/snippet}
 							</Sidebar.MenuButton>
 							{#if item.count > 0}
-								<Sidebar.MenuBadge class="tabular-nums"
-									>{item.count > 99 ? '99+' : item.count}</Sidebar.MenuBadge
-								>
+								<Sidebar.MenuBadge>{item.count > 99 ? '99+' : item.count}</Sidebar.MenuBadge>
 							{/if}
 						</Sidebar.MenuItem>
 					{/each}
 				</Sidebar.Menu>
 			</Sidebar.GroupContent>
 		</Sidebar.Group>
+		<div class="mx-7 my-2 h-px bg-outline-variant"></div>
 		<Sidebar.Group>
-			<Sidebar.GroupLabel>Courses</Sidebar.GroupLabel>
+			<Sidebar.GroupLabel class="gap-3 [&>svg]:size-6"><SchoolIcon />Enrolled</Sidebar.GroupLabel>
 			<Sidebar.GroupContent>
 				<Sidebar.Menu
+					class="gap-0.5"
 					aria-label="Courses, drag to reorder"
 					ondragover={(e) => {
 						if (order.dragId && order.dragSection === 'visible') e.preventDefault();
@@ -198,7 +209,7 @@
 							<Sidebar.MenuButton>
 								{#snippet child({ props })}
 									<a href="/settings" {...props}
-										><span class="text-muted-foreground"
+										><span class="text-on-surface-variant"
 											>{archivedCourses.length
 												? 'No visible courses — see Archived below'
 												: 'No courses synced yet'}</span
@@ -213,29 +224,30 @@
 		</Sidebar.Group>
 		{#if archivedCourses.length}
 			<Sidebar.Group>
-				<Sidebar.GroupLabel class="gap-0.5">
+				<Sidebar.GroupLabel class="gap-0.5 pr-2">
 					<button
 						type="button"
 						onclick={toggleArchived}
 						aria-expanded={archivedOpen}
 						aria-label={archivedOpen ? 'Collapse archived courses' : 'Expand archived courses'}
-						class="flex shrink-0 items-center justify-center rounded-md p-0.5 text-sidebar-foreground/70 hover:text-foreground"
+						class="flex size-6 shrink-0 items-center justify-center rounded-full text-on-surface-variant transition-colors hover:text-on-surface"
 					>
-						<ChevronRightIcon
-							class={cn('size-3.5 transition-transform duration-200', archivedOpen && 'rotate-90')}
+						<ChevronDownIcon
+							class={cn('size-4 transition-transform duration-200', archivedOpen && 'rotate-180')}
 						/>
 					</button>
 					<a
 						href="/archived"
-						class="flex min-w-0 flex-1 items-center gap-1.5 hover:text-foreground"
+						class="flex min-w-0 flex-1 items-center gap-1.5 text-on-surface-variant hover:text-on-surface"
 					>
-						<ArchiveIcon class="size-3.5 shrink-0" />
+						<ArchiveIcon class="size-4 shrink-0" />
 						<span class="truncate">Archived ({archivedCourses.length})</span>
 					</a>
 				</Sidebar.GroupLabel>
 				{#if archivedOpen}
 					<Sidebar.GroupContent>
 						<Sidebar.Menu
+							class="gap-0.5"
 							aria-label="Archived courses, drag to reorder"
 							ondragover={(e) => {
 								if (order.dragId && order.dragSection === 'archived') e.preventDefault();
@@ -249,25 +261,14 @@
 			</Sidebar.Group>
 		{/if}
 	</Sidebar.Content>
-	<Sidebar.Footer>
+	<Sidebar.Footer class="px-3 pb-3">
 		<Sidebar.Menu>
 			<Sidebar.MenuItem>
-				<Sidebar.MenuButton size="lg" isActive={page.url.pathname.startsWith('/settings')}>
+				<Sidebar.MenuButton isActive={settingsActive}>
 					{#snippet child({ props })}
 						<a href="/settings" {...props}>
-							<UserAvatar
-								src={profile?.photoUrl}
-								name={profile?.name}
-								class="size-8 rounded-lg"
-								fallbackClass="rounded-lg text-xs"
-							/>
-							<div class="grid min-w-0 leading-tight">
-								<span class="truncate font-medium">{profile?.name ?? 'Not synced'}</span>
-								<span class="truncate text-xs text-muted-foreground"
-									>{profile?.email ?? 'Set up sync'}</span
-								>
-							</div>
-							<SettingsIcon class="ml-auto text-muted-foreground" />
+							{#if settingsActive}<SettingsFill />{:else}<SettingsIcon />{/if}
+							<span>Settings</span>
 						</a>
 					{/snippet}
 				</Sidebar.MenuButton>

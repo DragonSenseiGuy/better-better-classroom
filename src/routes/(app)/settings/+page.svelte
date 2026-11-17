@@ -7,6 +7,7 @@
 	import SourcesCard from './sources-card.svelte';
 	import SyncCard from './sync-card.svelte';
 	import RichSessionCard from './rich-session-card.svelte';
+	import LinkAuthUserCard from './link-authuser-card.svelte';
 	import ThemePicker from './theme-picker.svelte';
 	import CourseVisibility from './course-visibility.svelte';
 	import NotificationsCard from './notifications-card.svelte';
@@ -29,34 +30,35 @@
 <PageHeader title="Settings" />
 
 <Tabs.Root value={tab} onValueChange={setTab} class="mt-6">
-	<Tabs.List variant="line">
-		<Tabs.Trigger value="connection">Connection</Tabs.Trigger>
-		<Tabs.Trigger value="appearance">Appearance</Tabs.Trigger>
-		<Tabs.Trigger value="courses">Courses</Tabs.Trigger>
-		<Tabs.Trigger value="notifications">Notifications</Tabs.Trigger>
-		<Tabs.Trigger value="shortcuts">Shortcuts</Tabs.Trigger>
+	<Tabs.List variant="line" class="w-full justify-start">
+		<Tabs.Trigger value="connection" class="flex-none">Connection</Tabs.Trigger>
+		<Tabs.Trigger value="appearance" class="flex-none">Appearance</Tabs.Trigger>
+		<Tabs.Trigger value="courses" class="flex-none">Courses</Tabs.Trigger>
+		<Tabs.Trigger value="notifications" class="flex-none">Notifications</Tabs.Trigger>
+		<Tabs.Trigger value="shortcuts" class="flex-none">Shortcuts</Tabs.Trigger>
 	</Tabs.List>
 
-	<Tabs.Content value="connection" class="mt-6">
+	<Tabs.Content value="connection" class="mt-4 flex flex-col gap-4">
 		<AccountCard />
 		<SourcesCard providers={data.providers} />
 		<SyncCard connection={data.connection} />
 		<RichSessionCard initial={data.rich} />
+		<LinkAuthUserCard />
 	</Tabs.Content>
 
-	<Tabs.Content value="appearance" class="mt-6">
+	<Tabs.Content value="appearance" class="mt-4 flex flex-col gap-4">
 		<ThemePicker />
 	</Tabs.Content>
 
-	<Tabs.Content value="courses" class="mt-6">
+	<Tabs.Content value="courses" class="mt-4 flex flex-col gap-4">
 		<CourseVisibility />
 	</Tabs.Content>
 
-	<Tabs.Content value="notifications" class="mt-6">
+	<Tabs.Content value="notifications" class="mt-4 flex flex-col gap-4">
 		<NotificationsCard />
 	</Tabs.Content>
 
-	<Tabs.Content value="shortcuts" class="mt-6">
+	<Tabs.Content value="shortcuts" class="mt-4 flex flex-col gap-4">
 		<ShortcutsTable />
 	</Tabs.Content>
 </Tabs.Root>
