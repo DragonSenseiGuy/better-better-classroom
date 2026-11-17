@@ -178,6 +178,13 @@ async function courseContent(
 	// arrive on full syncs (and text/author edits via enrichment).
 	for await (const page of iterateCourseStream(session, courseId)) {
 		for (const item of page.items) {
+			// Every coursework id the stream showed, kept even when the since
+			// filter below drops it: the submission read wants all of the
+			// course's work so grades and states stay current between full
+			// syncs. (Collecting it after the filter made every incremental
+			// sync with no new items return no submissions — and wipe the
+			// course's cached ones.)
+			if (item.kind === 'courseWork') workIds.push(item.id);
 			if (since && item.createdAt && item.createdAt < since) continue;
 			// Probe-mapped stream shapes (see the session-probe findings):
 			// coursework carries due date, points and a topic reference;
@@ -186,7 +193,6 @@ async function courseContent(
 			// exposes only its auto-created Drive folder, and material
 			// attachments are referenced by id and need another RPC.
 			if (item.kind === 'courseWork') {
-				workIds.push(item.id);
 				courseWork.push({
 					...postBase(courseId, item, `a/${item.id}/details`),
 					...(item.driveFolderUrl
@@ -220,6 +226,10 @@ async function courseContent(
 	// Each failure only degrades to an error entry the sync reports like
 	// any other, so one flaky RPC never takes the whole content pass down.
 	let submissions: RawSubmission[] = [];
+	// False once a submission read failed: the returned content then omits
+	// `submissions` entirely, which applyCourseContent treats as "leave the
+	// cached rows alone" instead of replacing them with an empty list.
+	let submissionsFresh = true;
 	let topics: { id: string; name: string; updateTime?: string }[] = [];
 	const errors: Record<string, string> = {};
 	try {
@@ -257,7 +267,10 @@ async function courseContent(
 		}));
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
-		if (wantSubmissions && workIds.length > 0) errors.submissions = message;
+		if (wantSubmissions && workIds.length > 0) {
+			errors.submissions = message;
+			submissionsFresh = false;
+		}
 		errors.topics = message;
 	}
 	// materials is a real list now, but still empty for material posts whose
@@ -267,7 +280,7 @@ async function courseContent(
 		announcements,
 		courseWork,
 		materials,
-		submissions,
+		...(submissionsFresh ? { submissions } : {}),
 		...(topics.length > 0 ? { topics } : {}),
 		...(Object.keys(errors).length > 0 ? { errors } : {})
 	};
