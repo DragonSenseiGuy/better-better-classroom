@@ -15,6 +15,7 @@ import {
 	setCourseOrder,
 	setCoursePrefs,
 	setMeta,
+	setPostExtras,
 	snapshot,
 	updateCourse
 } from './store';
@@ -102,6 +103,33 @@ test('applyContent keeps rich html only while the post is unchanged', () => {
 		expect(listByCourse('announcements', 'c1')[0]?.html).toBe('<b>x</b>');
 		applyContent('announcements', 'c1', [post('r', { updatedAt: 6 })]);
 		expect(listByCourse('announcements', 'c1')[0]?.html).toBeUndefined();
+	});
+});
+
+test('backfilled materials survive record syncs; setPostExtras writes them', () => {
+	as(() => {
+		applyCourses([course('c1')]);
+		applyContent('announcements', 'c1', [post('a')]);
+		const [row] = listByCourse('announcements', 'c1');
+		const materials = [
+			{ type: 'drive', title: 'Notes.pdf', url: 'https://drive.google.com/file/d/1/view' }
+		];
+		expect(setPostExtras('announcements', row, { materials })?.type).toBe('update');
+		expect(listByCourse('announcements', 'c1')[0]?.materials).toEqual(materials);
+		// Writing the same materials again is a no-op (fresh row).
+		const updated = listByCourse('announcements', 'c1')[0];
+		expect(setPostExtras('announcements', updated, { materials })).toBeNull();
+		// The record sync re-applies the unchanged post every tick; the
+		// backfilled list survives it like rich html does.
+		applyContent('announcements', 'c1', [post('a')]);
+		expect(listByCourse('announcements', 'c1')[0]?.materials).toEqual(materials);
+		// An edited post drops the backfill, and a fresh non-empty list
+		// (Apps Script) always wins.
+		applyContent('announcements', 'c1', [post('a', { updatedAt: 6 })]);
+		expect(listByCourse('announcements', 'c1')[0]?.materials).toEqual([]);
+		const fresh = [{ type: 'link', url: 'https://example.com' }];
+		applyContent('announcements', 'c1', [post('a', { materials: fresh, updatedAt: 6 })]);
+		expect(listByCourse('announcements', 'c1')[0]?.materials).toEqual(fresh);
 	});
 });
 

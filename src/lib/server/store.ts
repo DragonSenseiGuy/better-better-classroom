@@ -207,7 +207,12 @@ export function snapshot(sync: SyncStatus): Snapshot {
 	};
 }
 
-type MaybeRich = { html?: string; author?: Author; updatedAt?: number };
+type MaybeRich = {
+	html?: string;
+	author?: Author;
+	materials?: Attachment[];
+	updatedAt?: number;
+};
 
 function keepHtml<T>(prev: T | undefined, fresh: T): T {
 	const p = prev as MaybeRich | undefined;
@@ -217,6 +222,11 @@ function keepHtml<T>(prev: T | undefined, fresh: T): T {
 	if (p.author !== undefined && f.author === undefined) out.author = p.author;
 	if (p.html !== undefined && f.html === undefined && p.updatedAt === f.updatedAt)
 		out.html = p.html;
+	// Attachment backfill costs one RPC per post, so its results survive
+	// record syncs the same way html does, while the post is unchanged. A
+	// fresh non-empty list (Apps Script always sends one) wins.
+	if (p.materials?.length && f.materials?.length === 0 && p.updatedAt === f.updatedAt)
+		out.materials = p.materials;
 	return out as T;
 }
 
