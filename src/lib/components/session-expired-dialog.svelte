@@ -63,13 +63,16 @@
 			<ol class="list-decimal space-y-1 pl-5 text-sm text-muted-foreground">
 				<li>Open classroom.google.com/u/0/h/st signed in with your school account.</li>
 				<li>Open DevTools → Network, reload, click the first classroom.google.com request.</li>
-				<li>Under Request Headers copy the whole <code>Cookie</code> value.</li>
+				<li>
+					Right-click it → Copy → <code>Copy as cURL</code> and paste it below. Pasting just the
+					<code>Cookie</code> header also works.
+				</li>
 			</ol>
 			<textarea
 				bind:value={cookie}
 				rows="4"
 				spellcheck="false"
-				placeholder="SID=…; HSID=…; SSID=…; APISID=…; SAPISID=…; …"
+				placeholder="curl 'https://classroom.google.com/u/0/h/st' -H 'cookie: SID=…; SAPISID=…' …"
 				class="w-full rounded-lg border bg-background px-3 py-2 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
 			></textarea>
 			{#if error}

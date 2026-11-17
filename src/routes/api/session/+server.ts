@@ -3,8 +3,9 @@ import type { RequestHandler } from './$types';
 import {
 	probeSessionBase,
 	withoutCookie,
-	parsePastedCookie,
-	probeErrorMessage
+	parseSessionPaste,
+	probeErrorMessage,
+	type SessionPaste
 } from '#lib/server/web-probe.ts';
 import { saveWebSession } from '#lib/server/store.ts';
 import { runSync, syncStatus } from '#lib/server/sync.ts';
@@ -17,16 +18,21 @@ import { runSync, syncStatus } from '#lib/server/sync.ts';
  */
 export const POST: RequestHandler = async ({ request }) => {
 	const body = (await request.json().catch(() => ({}))) as { cookie?: unknown };
-	let cookie: string;
+	let parsed: SessionPaste;
 	try {
-		cookie = parsePastedCookie(body.cookie);
+		parsed = parseSessionPaste(body.cookie);
 	} catch (err) {
 		return json(probeErrorMessage(err), { status: 400 });
 	}
-	const probed = await probeSessionBase(cookie);
+	const probed = await probeSessionBase(parsed.cookie, parsed.browser);
 	if (!probed.ok) return json(probed, { status: 400 });
 	const savedAt = Date.now();
-	saveWebSession({ cookie: probed.cookie, authuser: probed.authuser, savedAt });
+	saveWebSession({
+		cookie: probed.cookie,
+		authuser: probed.authuser,
+		savedAt,
+		browser: probed.browser
+	});
 	// Fire-and-forget, but never silently: failures surface in sync status
 	// and the client already receives the ticket via syncStatus().
 	// (No draft to clear here: this route never creates webSessionDraft —

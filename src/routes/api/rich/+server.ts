@@ -3,9 +3,10 @@ import type { RequestHandler } from './$types';
 import {
 	probeSession,
 	withoutCookie,
-	parsePastedCookie,
+	parseSessionPaste,
 	probeErrorMessage,
-	sanitizeProbeAttempts
+	sanitizeProbeAttempts,
+	type SessionPaste
 } from '#lib/server/web-probe.ts';
 import {
 	deleteMeta,
@@ -47,7 +48,7 @@ export const POST: RequestHandler = async ({ request }) => {
 		await runRichSync({ full: true });
 		return json({ ok: true, ...summary() });
 	}
-	let cookie: string;
+	let parsed: SessionPaste;
 	if (body.retry === true) {
 		const draft = getWebSessionDraft();
 		if (!draft)
@@ -55,16 +56,21 @@ export const POST: RequestHandler = async ({ request }) => {
 				{ ok: false, code: 'state', message: 'No cookie to retry with.' },
 				{ status: 400 }
 			);
-		cookie = draft;
-	} else {
 		try {
-			cookie = parsePastedCookie(body.cookie);
+			parsed = parseSessionPaste(draft);
 		} catch (err) {
 			return json(probeErrorMessage(err), { status: 400 });
 		}
-		saveWebSessionDraft(cookie);
+	} else {
+		try {
+			parsed = parseSessionPaste(body.cookie);
+		} catch (err) {
+			return json(probeErrorMessage(err), { status: 400 });
+		}
+		// Draft keeps the raw paste, so a retry re-runs the same parse.
+		saveWebSessionDraft(body.cookie as string);
 	}
-	const result = await probeSession(cookie);
+	const result = await probeSession(parsed.cookie, parsed.browser);
 	if (!result.ok) {
 		const sanitized = { ...result, attempts: sanitizeProbeAttempts(result.attempts) };
 		setMeta('richProbe', { at: Date.now(), ...sanitized });
@@ -73,7 +79,12 @@ export const POST: RequestHandler = async ({ request }) => {
 	const safe = withoutCookie(result);
 	const sanitizedSafe = { ...safe, attempts: sanitizeProbeAttempts(safe.attempts) };
 	setMeta('richProbe', { at: Date.now(), ...sanitizedSafe });
-	saveWebSession({ cookie: result.cookie, authuser: result.authuser, savedAt: Date.now() });
+	saveWebSession({
+		cookie: result.cookie,
+		authuser: result.authuser,
+		savedAt: Date.now(),
+		browser: result.browser
+	});
 	deleteMeta('webSessionDraft');
 	saveRichStatus({ ok: true, at: Date.now(), updated: 0 });
 	runRichSync({ full: true }).catch((err) => console.error('enrichment sync failed', err));

@@ -50,6 +50,21 @@ export type WebProfile = { id: string; name?: string; email?: string; photoUrl?:
 
 export class SessionError extends Error {}
 
+/** Google throttled the session (HTTP 429); carries the server's hint if it sent one. */
+export class RateLimitedError extends Error {
+	constructor(public readonly retryAfterSeconds?: number) {
+		super('Classroom rate limited the session (429).');
+		this.name = 'RateLimitedError';
+	}
+}
+
+const retryAfterSeconds = (res: Response): number | undefined => {
+	const raw = res.headers.get('retry-after');
+	if (!raw) return undefined;
+	const seconds = Number(raw);
+	return Number.isFinite(seconds) && seconds >= 0 ? seconds : undefined;
+};
+
 export class RedirectError extends SessionError {
 	constructor(
 		message: string,
@@ -62,7 +77,44 @@ export class RedirectError extends SessionError {
 
 export const isSlotExhausted = (err: unknown): boolean => err instanceof RedirectError;
 
-export type CookieJar = { cookie: string; onChange?: (cookie: string) => void };
+/**
+ * The real browser fingerprint a cookie was copied from, stored per session
+ * so every request replays it instead of the hardcoded defaults below. A
+ * pasted cookie probed with mismatched client hints looks scripted to
+ * Google's session heuristics; matching the minting browser is the point.
+ */
+export type BrowserFingerprint = {
+	userAgent?: string;
+	secChUa?: string;
+	secChUaMobile?: string;
+	secChUaPlatform?: string;
+	acceptLanguage?: string;
+};
+
+const FINGERPRINT_HEADERS = {
+	userAgent: 'user-agent',
+	secChUa: 'sec-ch-ua',
+	secChUaMobile: 'sec-ch-ua-mobile',
+	secChUaPlatform: 'sec-ch-ua-platform',
+	acceptLanguage: 'accept-language'
+} as const;
+
+/** Only the stored fields, overriding the Chrome 129 defaults; absent = defaults. */
+export function fingerprintHeaders(browser?: BrowserFingerprint): Record<string, string> {
+	if (!browser) return {};
+	const out: Record<string, string> = {};
+	for (const [key, header] of Object.entries(FINGERPRINT_HEADERS)) {
+		const value = browser[key as keyof BrowserFingerprint];
+		if (value) out[header] = value;
+	}
+	return out;
+}
+
+export type CookieJar = {
+	cookie: string;
+	browser?: BrowserFingerprint;
+	onChange?: (cookie: string) => void;
+};
 
 export function mergeCookies(cookie: string, setCookies: string[]): string {
 	const order: string[] = [];
@@ -164,6 +216,7 @@ export async function rotateSession(jar: CookieJar): Promise<Rotation> {
 		method: 'POST',
 		headers: {
 			...CLIENT_HINTS,
+			...fingerprintHeaders(jar.browser),
 			cookie: jar.cookie,
 			'content-type': 'application/json',
 			origin: 'https://accounts.google.com',
@@ -347,7 +400,7 @@ export async function fetchHomeHtml(
 	let path = `/u/${authuser}/h`;
 	for (let hop = 0; hop < MAX_HOME_HOPS; hop++) {
 		const res = await fetch(`${ORIGIN}${path}`, {
-			headers: { ...DOCUMENT_HEADERS, cookie: jar.cookie },
+			headers: { ...DOCUMENT_HEADERS, ...fingerprintHeaders(jar.browser), cookie: jar.cookie },
 			redirect: 'manual',
 			signal: AbortSignal.timeout(30_000)
 		});
@@ -361,7 +414,10 @@ export async function fetchHomeHtml(
 			path = next;
 			continue;
 		}
-		if (!res.ok) throw new SessionError(`Classroom responded ${res.status}`);
+		if (!res.ok) {
+			if (res.status === 429) throw new RateLimitedError(retryAfterSeconds(res));
+			throw new SessionError(`Classroom responded ${res.status}`);
+		}
 		const html = await res.text();
 		const next = findHomeRedirect(html);
 		if (next && next !== path) {
@@ -455,6 +511,7 @@ export async function callRpc(
 		method: 'POST',
 		headers: {
 			...XHR_HEADERS,
+			...fingerprintHeaders(jar.browser),
 			cookie: jar.cookie,
 			'content-type': 'application/x-www-form-urlencoded;charset=UTF-8',
 			origin: ORIGIN,
@@ -471,6 +528,7 @@ export async function callRpc(
 	capture?.push({ status: res.status, head: text.replace(/\s+/g, ' ').slice(0, 600) });
 	if (res.status === 401 || res.status === 403 || (res.status >= 300 && res.status < 400))
 		throw new SessionError(`Classroom rejected the session (${res.status}).`);
+	if (res.status === 429) throw new RateLimitedError(retryAfterSeconds(res));
 	if (!res.ok) throw new Error(`Classroom responded ${res.status}`);
 	return extractPayload(text, rpc);
 }
@@ -932,6 +990,7 @@ export async function uploadToDrive(
 	const digest = createHash('sha1').update(`${ts} ${sapisid} ${origin}`).digest('hex');
 	const common = {
 		...CLIENT_HINTS,
+		...fingerprintHeaders(jar.browser),
 		cookie: jar.cookie,
 		origin,
 		referer: `${origin}/`,

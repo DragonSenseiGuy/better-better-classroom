@@ -15,6 +15,7 @@ import type {
 	Teacher
 } from '#lib/shared/types.ts';
 import { config, isConfigured } from './config';
+import type { BrowserFingerprint } from './classroom-web';
 import { recordProvider } from './providers';
 import { open, seal } from './secrets';
 
@@ -72,7 +73,13 @@ export function saveConnection(connection: Connection) {
 	setMeta('connection', { ...connection, key: seal(connection.key) });
 }
 
-export type WebSession = { cookie: string; authuser: number; savedAt: number };
+export type WebSession = {
+	cookie: string;
+	authuser: number;
+	savedAt: number;
+	/** Real browser headers from the paste; requests replay them instead of defaults. */
+	browser?: BrowserFingerprint;
+};
 
 export function getWebSession(): WebSession | null {
 	const stored = getMeta<WebSession>('webSession');

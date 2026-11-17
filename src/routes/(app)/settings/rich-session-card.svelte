@@ -153,15 +153,15 @@
 					> request.
 				</li>
 				<li>
-					Under Request Headers copy the whole <span class="font-mono">Cookie</span> value and paste it
-					below.
+					Right-click it → Copy → <span class="font-mono">Copy as cURL</span> and paste the whole
+					command below. Pasting just the <span class="font-mono">Cookie</span> header also works.
 				</li>
 			</ol>
 			<textarea
 				bind:value={cookieDraft}
 				rows="4"
 				spellcheck="false"
-				placeholder="SID=…; HSID=…; SSID=…; APISID=…; SAPISID=…; …"
+				placeholder="curl 'https://classroom.google.com/u/0/h/st' -H 'cookie: SID=…; SAPISID=…' …"
 				class="w-full rounded-lg border bg-background px-3 py-2 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
 			></textarea>
 			<div class="flex items-center gap-2">

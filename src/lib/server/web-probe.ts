@@ -10,6 +10,7 @@ import {
 	fetchStreamPage,
 	isSlotExhausted,
 	parseTokens,
+	type BrowserFingerprint,
 	type CookieJar,
 	type RawCapture,
 	type WebTokens
@@ -28,19 +29,81 @@ export class CookieError extends Error {
 
 const MAX_AUTHUSER_SLOTS = 5;
 
+const PASTE_HINT =
+	'Open DevTools → Network on classroom.google.com, right-click the first request → Copy → Copy as cURL, and paste the whole command here. Pasting just the Cookie header also works.';
+
+/** Client-hint headers worth replaying, keyed by their header name. */
+const FINGERPRINT_HEADER_KEYS = {
+	'user-agent': 'userAgent',
+	'sec-ch-ua': 'secChUa',
+	'sec-ch-ua-mobile': 'secChUaMobile',
+	'sec-ch-ua-platform': 'secChUaPlatform',
+	'accept-language': 'acceptLanguage'
+} as const;
+
+const stripCookiePrefix = (value: string) => value.replace(/^cookie:\s*/i, '').trim();
+
 /**
- * Canonical validation for a pasted Cookie header. Both session routes share
- * it so SID/SAPISID requirements and `Cookie:` prefix stripping never drift.
+ * Parses header dumps from DevTools "Copy as cURL" (bash single quotes and
+ * Windows double quotes) and "Copy as fetch" into a lowercase header map.
+ * Returns null when the text is not a recognizable command, so the caller
+ * can fall back to treating it as a plain Cookie header.
  */
-export function parsePastedCookie(value: unknown): string {
-	if (typeof value !== 'string')
-		throw new CookieError('Paste the whole Cookie header. It should include SID and SAPISID.');
-	// Strip the header-name prefix before validating: DevTools copies it as
-	// `Cookie: SID=…`, and the SID check below would otherwise reject it.
-	const cookie = value.replace(/^cookie:\s*/i, '').trim();
-	if (!/(^|;\s*)SID=/.test(cookie))
-		throw new CookieError('Paste the whole Cookie header. It should include SID and SAPISID.');
-	return cookie;
+function parseDevtoolsHeaders(text: string): Record<string, string> | null {
+	const headers: Record<string, string> = {};
+	if (/^curl\b/i.test(text)) {
+		// Bash copy escapes inner quotes as \"; Windows uses \" around the
+		// whole value, so unescape only inside double-quoted captures.
+		const re = /(?:^|[\s^])-(?:H|--header)\s+(?:'([^']*)'|"((?:[^"\\]|\\.)*)")/g;
+		for (const m of text.matchAll(re)) {
+			const raw = (m[1] ?? m[2] ?? '').replace(/\\"/g, '"');
+			const i = raw.indexOf(':');
+			if (i > 0) headers[raw.slice(0, i).trim().toLowerCase()] = raw.slice(i + 1).trim();
+		}
+		return Object.keys(headers).length ? headers : null;
+	}
+	if (/^(?:await\s+)?fetch\(/i.test(text)) {
+		const re = /"((?:[^"\\]|\\.)+)"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+		for (const m of text.matchAll(re)) headers[m[1].toLowerCase()] = m[2].replace(/\\"/g, '"');
+		return Object.keys(headers).length ? headers : null;
+	}
+	return null;
+}
+
+function pickFingerprint(headers: Record<string, string>): BrowserFingerprint | undefined {
+	const browser: Record<string, string> = {};
+	for (const [header, key] of Object.entries(FINGERPRINT_HEADER_KEYS)) {
+		const value = headers[header];
+		if (value) browser[key] = value;
+	}
+	return Object.keys(browser).length ? (browser as BrowserFingerprint) : undefined;
+}
+
+export type SessionPaste = { cookie: string; browser?: BrowserFingerprint };
+
+/**
+ * Canonical validation for a pasted cookie: a DevTools "Copy as cURL" or
+ * "Copy as fetch" command, a `Cookie: …` header, or the bare cookie string.
+ * Returns the cookie plus the real browser headers when the paste carries
+ * them, so the session can replay the fingerprint it was minted with. Both
+ * session routes share this so SID/SAPISID requirements never drift.
+ */
+export function parseSessionPaste(value: unknown): SessionPaste {
+	const text = typeof value === 'string' ? value.trim() : '';
+	if (!text) throw new CookieError(PASTE_HINT);
+	const devtools = parseDevtoolsHeaders(text);
+	if (devtools) {
+		const cookie = stripCookiePrefix(devtools.cookie ?? '');
+		if (!/(^|;\s*)SID=/.test(cookie))
+			throw new CookieError(
+				'That command has no Cookie header. Copy it from a signed-in classroom.google.com request.'
+			);
+		return { cookie, browser: pickFingerprint(devtools) };
+	}
+	// Plain cookie: strip the header-name prefix DevTools copies as `Cookie: SID=…`.
+	const cookie = stripCookiePrefix(text);
+	if (!/(^|;\s*)SID=/.test(cookie)) throw new CookieError(PASTE_HINT);
+	return { cookie };
 }
 
 export function probeErrorMessage(err: unknown): ProbeError {
@@ -62,9 +125,10 @@ export type SlotProbe = {
 /** Enumerates account slots 0..maxSlots with a pasted cookie. Shared by both probes. */
 async function listSlots(
 	cookie: string,
+	browser?: BrowserFingerprint,
 	maxSlots = MAX_AUTHUSER_SLOTS
 ): Promise<{ jar: CookieJar; slots: SlotProbe[] }> {
-	const jar: CookieJar = { cookie };
+	const jar: CookieJar = { cookie, browser };
 	const slots: SlotProbe[] = [];
 	for (let authuser = 0; authuser < maxSlots; authuser++) {
 		try {
@@ -120,18 +184,22 @@ export function chooseSlotWithCourses(slots: SlotProbe[]): SlotProbe | undefined
  * slot usually signs in fine but holds no courses, which used to surface
  * later as "no courses were found on the Classroom home page").
  */
-export async function probeSessionBase(cookie: string): Promise<
+export async function probeSessionBase(
+	cookie: string,
+	browser?: BrowserFingerprint
+): Promise<
 	| {
 			ok: true;
 			authuser: number;
 			email?: string;
 			cookie: string;
+			browser?: BrowserFingerprint;
 			courseCount: number;
 			code?: undefined;
 	  }
 	| { ok: false; message: string; code: string }
 > {
-	const { jar, slots } = await listSlots(cookie);
+	const { jar, slots } = await listSlots(cookie, browser);
 	const hit = chooseSlotWithCourses(slots);
 	if (hit?.tokens) {
 		const courseCount = hit.courses?.length ?? 0;
@@ -141,6 +209,7 @@ export async function probeSessionBase(cookie: string): Promise<
 				authuser: hit.authuser,
 				email: hit.email,
 				cookie: jar.cookie,
+				browser,
 				courseCount
 			};
 		const fmt = (s: SlotProbe) => {
@@ -213,7 +282,14 @@ async function sampleSlot(
 }
 
 export type ProbeResult =
-	| { ok: true; authuser: number; sample: number; cookie: string; attempts: ProbeAttempt[] }
+	| {
+			ok: true;
+			authuser: number;
+			sample: number;
+			cookie: string;
+			browser?: BrowserFingerprint;
+			attempts: ProbeAttempt[];
+	  }
 	| ({ ok: false; code: 'probe' | 'state'; attempts: ProbeAttempt[] } & { message: string });
 
 /**
@@ -245,7 +321,10 @@ export function sanitizeProbeAttempts(attempts: ProbeAttempt[]): ProbeAttempt[] 
  * synced courses (and the app profile email), sampling stream pages to prove
  * a slot can actually load posts.
  */
-export async function probeSession(cookie: string): Promise<ProbeResult> {
+export async function probeSession(
+	cookie: string,
+	browser?: BrowserFingerprint
+): Promise<ProbeResult> {
 	const courses = listAll('courses').filter(isVisible);
 	const attempts: ProbeAttempt[] = [];
 	if (courses.length === 0)
@@ -256,7 +335,7 @@ export async function probeSession(cookie: string): Promise<ProbeResult> {
 			attempts
 		};
 	const me = getProfile()?.email?.toLowerCase();
-	const { jar, slots } = await listSlots(cookie);
+	const { jar, slots } = await listSlots(cookie, browser);
 	const sample = courses
 		.map((c) => ({ c, n: listByCourse('announcements', c.id).length }))
 		.sort((a, b) => b.n - a.n)
@@ -284,6 +363,7 @@ export async function probeSession(cookie: string): Promise<ProbeResult> {
 				authuser: slot.authuser,
 				sample: result.sample,
 				cookie: jar.cookie,
+				browser,
 				attempts
 			};
 	}
