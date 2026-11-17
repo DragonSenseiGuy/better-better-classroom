@@ -13,6 +13,10 @@ const folder = (authuser?: number): Attachment => ({
 test('isDriveFolder matches pinned and unpinned stream folder URLs only', () => {
 	expect(isDriveFolder(folder())).toBe(true);
 	expect(isDriveFolder(folder(1))).toBe(true);
+	// pinDriveAccount produces /drive/u/N/folders/ from the stream shape.
+	expect(
+		isDriveFolder({ type: 'drive', url: 'https://drive.google.com/drive/u/0/folders/abc' })
+	).toBe(true);
 	expect(isDriveFolder({ type: 'drive', url: 'https://drive.google.com/file/d/abc/view' })).toBe(
 		false
 	);

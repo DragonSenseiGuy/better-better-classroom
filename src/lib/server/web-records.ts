@@ -206,6 +206,7 @@ async function courseContent(
 								materials: [
 									{
 										type: 'drive',
+										title: 'Class Drive folder',
 										url: pinDriveAccount(item.driveFolderUrl, session.authuser)
 									} satisfies RawAttachment
 								]

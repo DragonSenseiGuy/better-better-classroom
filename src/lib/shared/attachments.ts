@@ -11,7 +11,9 @@ export function isDriveFolder(a: Attachment): boolean {
 	return (
 		a.type === 'drive' &&
 		!!a.url &&
-		/^https:\/\/drive\.google\.com\/(u\/\d+\/)?drive\/folders\//.test(a.url)
+		// Both account-pinned shapes occur: /drive/u/N/folders/ (pinned by
+		// pinDriveAccount) and /u/N/drive/folders/.
+		/^https:\/\/drive\.google\.com\/(?:u\/\d+\/)?(?:drive\/)?(?:u\/\d+\/)?folders\//.test(a.url)
 	);
 }
 

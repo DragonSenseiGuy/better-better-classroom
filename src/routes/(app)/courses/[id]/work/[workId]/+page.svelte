@@ -151,14 +151,16 @@
 			{:else}
 				<p class="text-sm text-muted-foreground">No instructions were given.</p>
 			{/if}
-			{#if w.materials.length}
+			{#if attachmentItems.length}
+				<!-- attachmentItems merges the row's materials with the details
+					fetch, so a post whose only stored material is the Drive
+					folder still gains its real attachments here. -->
 				<h2 class="mt-8 text-base font-semibold tracking-tight">Attachments</h2>
-				<div class="mt-2 max-w-lg"><Attachments items={w.materials} /></div>
+				<div class="mt-2 max-w-lg"><Attachments items={attachmentItems} /></div>
 			{:else if limited && (extraMaterials === null || extraMaterials.length > 0)}
 				<!-- Post attachments are not in the session-mode stream; fetch on open. -->
-				{#if attachmentItems.length}
+				{#if extraMaterials === null}
 					<h2 class="mt-8 text-base font-semibold tracking-tight">Attachments</h2>
-					<div class="mt-2 max-w-lg"><Attachments items={attachmentItems} /></div>
 				{/if}
 			{/if}
 		</div>
