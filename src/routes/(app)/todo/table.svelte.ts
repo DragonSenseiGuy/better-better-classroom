@@ -27,7 +27,13 @@ const columns: ColumnDef<typeof features, WorkSummary, any>[] = [
 	{ id: 'courseName', accessorKey: 'courseName', header: 'Course', sortFn: 'alphanumeric' },
 	{
 		id: 'dueAt',
-		accessorFn: (w) => w.dueAt ?? Number.MAX_SAFE_INTEGER,
+		accessorFn: (w) => w.dueAt,
+		// Undefined (undated) rows sort last in both directions: the sorted
+		// row model applies sortUndefined before the direction flip, so the
+		// Done view's descending order keeps undated work at the bottom
+		// instead of its old MAX_SAFE_INTEGER placeholder floating it to the
+		// top.
+		sortUndefined: 'last',
 		header: 'Due',
 		sortFn: 'basic'
 	},
