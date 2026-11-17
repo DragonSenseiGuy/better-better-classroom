@@ -263,7 +263,10 @@ async function backfillPostAttachments(
 }
 
 const toAttachment = (a: WebPostAttachment): Attachment => ({
-	type: 'drive',
+	// t51ITc labels the type in its own slot (2 = drive, 3 = youtube,
+	// 4 = link, 7 = form); unknown types fall back by shape — a URL in the
+	// id slot is a link, anything else is a drive file.
+	type: a.kind ?? (a.driveId ? 'drive' : 'link'),
 	...(a.title ? { title: a.title } : {}),
 	...(a.url ? { url: a.url } : {}),
 	...(a.thumbnailUrl ? { thumbnailUrl: a.thumbnailUrl } : {})
@@ -464,12 +467,7 @@ async function removeWebClassComment(courseId: string, workId: string, commentId
 async function fetchPostAttachments(courseId: string, workId: string): Promise<Attachment[]> {
 	const { session, jar, tokens } = await withWebStudent();
 	const found = await fetchWorkAttachments(jar, session.authuser, tokens, workId, courseId);
-	return found.map((a) => ({
-		type: 'drive',
-		...(a.title ? { title: a.title } : {}),
-		...(a.url ? { url: a.url } : {}),
-		...(a.thumbnailUrl ? { thumbnailUrl: a.thumbnailUrl } : {})
-	}));
+	return found.map(toAttachment);
 }
 
 async function submissionAction(

@@ -857,10 +857,21 @@ const WORK_ATTACHMENT_MASK =
 export type WebPostAttachment = {
 	attachmentId: string;
 	title?: string;
+	/** Drive file id; a link attachment carries its URL here instead, so this stays unset for those. */
 	driveId?: string;
 	mime?: string;
 	url?: string;
 	thumbnailUrl?: string;
+	/**
+	 * Attachment type from the object's type slot (a[3], probe-verified
+	 * 2026-11-17 against ~500 posts: 2 = drive file — docs, PDFs, images;
+	 * 3 = youtube — a[2] holds the video id, a[5] an i.ytimg.com thumb,
+	 * a[8] the duration in seconds; 4 = link, whose a[2] holds the URL and
+	 * whose thumbnail comes from classroom.google.com's webthumbnail
+	 * endpoint; 7 = google form — a[2] the form's Drive file id, a[6] a
+	 * docs.google.com/forms/d/e/…/viewform URL). Value 1 was never observed.
+	 */
+	kind?: 'drive' | 'link' | 'youtube' | 'form';
 };
 
 export function parseWorkAttachmentsPayload(payload: Json): WebPostAttachment[] {
@@ -879,14 +890,31 @@ export function parseWorkAttachmentsPayload(payload: Json): WebPostAttachment[] 
 					? record[2][1]
 					: undefined;
 		if (typeof attachmentId !== 'string') continue;
+		// Slot a[3] is the attachment type (see WebPostAttachment.kind). Only
+		// drive attachments keep the id slot as driveId: youtube posts hold a
+		// video id there, links a URL, and forms' URL already lives in a[6].
+		const kind =
+			a[3] === 2
+				? 'drive'
+				: a[3] === 3
+					? 'youtube'
+					: a[3] === 4
+						? 'link'
+						: a[3] === 7
+							? 'form'
+							: undefined;
+		const idSlot = typeof a[2] === 'string' ? a[2] : undefined;
+		const driveId =
+			idSlot && !/^https?:\/\//.test(idSlot) && (!kind || kind === 'drive') ? idSlot : undefined;
 		out.push({
 			attachmentId,
 			title: typeof a[0] === 'string' ? a[0] : undefined,
-			driveId: typeof a[2] === 'string' ? a[2] : undefined,
+			driveId,
 			mime: typeof a[4] === 'string' ? a[4] : undefined,
 			url: typeof a[6] === 'string' ? a[6] : undefined,
 			// Drive thumbs end in a ={size} placeholder the page fills in.
-			thumbnailUrl: typeof a[5] === 'string' ? a[5].replace('{size}', 's400') : undefined
+			thumbnailUrl: typeof a[5] === 'string' ? a[5].replace('{size}', 's400') : undefined,
+			...(kind ? { kind } : {})
 		});
 	}
 	return out;

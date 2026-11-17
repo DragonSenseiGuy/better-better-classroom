@@ -24,6 +24,7 @@ import {
 	fetchProfiles,
 	parseStreamPayload,
 	parseTokens,
+	parseWorkAttachmentsPayload,
 	querySubmissionAttachments,
 	type CookieJar,
 	type WebTokens
@@ -106,13 +107,19 @@ const subContext = (courseId: string) => ({
 	'x-goog-ext-53200201-jspb': `[{"444624357":[${courseId}]}]`
 });
 
+const WORK_ATTACHMENT_MASK =
+	'[[null,1,1,1,1,1,null,1,1,1,1,1,1,null,[[1,1,1,1,1],1,1,1,1,1,1],[[1,1,1,1,1],1,1,1,[1,1],1],1,null,1,[[1,1,1,1,1],1,1],1,[[1,1,1,1,1],1]]]';
+
 async function tokensFor(authuser: number): Promise<WebTokens> {
 	const { html } = await fetchHomeHtml(jar, authuser);
 	return parseTokens(html);
 }
 
 /** Plain page GET (no redirect following): whatever Google answers, saved. */
-async function fetchAny(authuser: number, path: string): Promise<{ status: number; html: string }> {
+async function fetchAny(
+	authuser: number,
+	path: string
+): Promise<{ status: number; html: string; headers: Headers }> {
 	const res = await fetch(`${ORIGIN}${path}`, {
 		headers: {
 			'user-agent': UA,
@@ -122,7 +129,7 @@ async function fetchAny(authuser: number, path: string): Promise<{ status: numbe
 		redirect: 'manual',
 		signal: AbortSignal.timeout(60_000)
 	});
-	return { status: res.status, html: await res.text() };
+	return { status: res.status, html: await res.text(), headers: res.headers };
 }
 
 /** Script-src URLs referenced by a page's HTML (JS bundles to download). */
@@ -261,6 +268,40 @@ async function main() {
 			subContext(courseId)
 		);
 		save(`substudent-${courseId}.txt`, text);
+	} else if (mode === 'postdetail') {
+		// Raw t51ITc (post detail) response for one post id. This is the RPC
+		// that carries a post's attachments; captured for a material page so
+		// far — this mode checks what it returns for a coursework post.
+		const a = Number(process.argv[3]);
+		const courseId = String(process.argv[4]);
+		const workId = String(process.argv[5]);
+		const tokens = await tokensFor(a);
+		const text = await rawRpc(
+			a,
+			tokens,
+			't51ITc',
+			`[[null,null,1,0],[[${workId},[${courseId}]]],${WORK_ATTACHMENT_MASK}]`,
+			`/u/${a}/c/${encodeCourseId(courseId)}/a/${encodeCourseId(workId)}/details`,
+			subContext(courseId)
+		);
+		save(`postdetail-${workId}.txt`, text);
+		const payload = extractPayload(text, 't51ITc');
+		console.log(JSON.stringify({ parsedAttachments: parseWorkAttachmentsPayload(payload).length }));
+	} else if (mode === 'linkcheck') {
+		// GET the URL the app constructs for "Open in Classroom" and report
+		// status + any redirect target, so a live session confirms the
+		// constructed path is the real one.
+		const a = Number(process.argv[3]);
+		const courseId = String(process.argv[4]);
+		const workId = String(process.argv[5] ?? '');
+		const path = workId
+			? `/u/${a}/c/${encodeCourseId(courseId)}/a/${encodeCourseId(workId)}/details`
+			: `/u/${a}/c/${encodeCourseId(courseId)}`;
+		const res = await fetchAny(a, path);
+		// Redirects land in `location`; same-origin targets report which path
+		// Classroom itself bounces to, cross-origin ones hint at auth trouble.
+		const location = res.headers.get('location') ?? '';
+		console.log(JSON.stringify({ path, status: res.status, redirectedTo: location || undefined }));
 	} else if (mode === 'pagedump') {
 		// Raw HTML of any /u/N Classroom page (to-do, classwork, archive…).
 		// Read-only GET; used to find JS bundle URLs and embedded payloads.
@@ -302,7 +343,7 @@ async function main() {
 		save('rpcmap.txt', lines.join('\n') + '\n');
 	} else {
 		throw new Error(
-			`unknown mode ${mode} (slots|courses|streamraw|members|subqueryraw|subbatch|substudent|pagedump|jsrpc)`
+			`unknown mode ${mode} (slots|courses|streamraw|members|subqueryraw|subbatch|substudent|postdetail|linkcheck|pagedump|jsrpc)`
 		);
 	}
 }

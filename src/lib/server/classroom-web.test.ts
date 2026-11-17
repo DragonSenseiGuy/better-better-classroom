@@ -755,10 +755,18 @@ test('parses the work-detail attachment objects', () => {
 		null,
 		null,
 		[
-			'Number patterns key .pdf',
-			'https://lh3.googleusercontent.com/drive-storage/AJQ={size}',
-			'https://drive.google.com/file/d/1cg-_Gbjk8L8YfzwB_2BSNZG4bNVQgOzT/view?usp=drive_web',
-			'https://drive.google.com/viewer/upload?ds=APznza'
+			[
+				'Number patterns key .pdf',
+				'https://lh3.googleusercontent.com/drive-storage/AJQ={size}',
+				'https://drive.google.com/file/d/1cg-_Gbjk8L8YfzwB_2BSNZG4bNVQgOzT/view?usp=drive_web',
+				'https://drive.google.com/viewer/upload?ds=APznza'
+			],
+			2,
+			null,
+			null,
+			null,
+			null,
+			'https://docs.google.com/file/d/1cg-_Gbjk8L8YfzwB_2BSNZG4bNVQgOzT/grading'
 		],
 		1,
 		null,
@@ -779,7 +787,138 @@ test('parses the work-detail attachment objects', () => {
 			driveId: '1cg-_Gbjk8L8YfzwB_2BSNZG4bNVQgOzT',
 			mime: 'application/pdf',
 			url: 'https://drive.google.com/file/d/1cg-_Gbjk8L8YfzwB_2BSNZG4bNVQgOzT/view?usp=drive_web',
-			thumbnailUrl: 'https://lh3.googleusercontent.com/drive-storage/AJQ=s400'
+			thumbnailUrl: 'https://lh3.googleusercontent.com/drive-storage/AJQ=s400',
+			kind: 'drive'
+		}
+	]);
+	// A link attachment (padlet capture, 2026-11-17): the id slot holds the
+	// target URL, there is no mime, the thumbnail comes from Classroom's
+	// webthumbnail endpoint, and the type slot says 4 — not a drive file.
+	const link = [
+		"Organization's protected padlet",
+		null,
+		'https://padlet.com/example/wall',
+		4,
+		null,
+		'https://classroom.google.com/webthumbnail?url=https://padlet.com/example/wall',
+		'https://padlet.com/example/wall',
+		null,
+		null,
+		null,
+		2,
+		null,
+		null,
+		null,
+		null,
+		1,
+		null,
+		'899067879716',
+		null,
+		null,
+		1
+	];
+	expect(
+		parseWorkAttachmentsPayload([
+			null,
+			[[link, null, [['899068608776', ['876017723492']], '899067879716']]]
+		])
+	).toEqual([
+		{
+			attachmentId: '899067879716',
+			title: "Organization's protected padlet",
+			url: 'https://padlet.com/example/wall',
+			thumbnailUrl: 'https://classroom.google.com/webthumbnail?url=https://padlet.com/example/wall',
+			kind: 'link'
+		}
+	]);
+	// A youtube attachment (capture 2026-11-17, type slot 3): the id slot
+	// holds the video id (not a Drive id), the thumbnail is an i.ytimg.com
+	// url and slot 8 carries the duration in seconds.
+	const youtube = [
+		'What are Pedigree Charts',
+		null,
+		'dQw4w9WgXcQ',
+		3,
+		null,
+		'https://i.ytimg.com/vi/dQw4w9WgXcQ/default.jpg',
+		'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+		null,
+		264,
+		null,
+		2,
+		null,
+		null,
+		null,
+		null,
+		1,
+		null,
+		'798126956195',
+		null,
+		null,
+		1
+	];
+	expect(
+		parseWorkAttachmentsPayload([
+			null,
+			[[youtube, null, [['798126956196', ['774782350284']], '798126956195']]]
+		])
+	).toEqual([
+		{
+			attachmentId: '798126956195',
+			title: 'What are Pedigree Charts',
+			url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+			thumbnailUrl: 'https://i.ytimg.com/vi/dQw4w9WgXcQ/default.jpg',
+			kind: 'youtube'
+		}
+	]);
+	// A google form attachment (capture 2026-11-17, type slot 7): the id
+	// slot is the form's Drive file id but the view url is the form itself.
+	const form = [
+		'Genetics *so far* Quiz',
+		null,
+		'1OeHeoJxUzfwVdxnJQ_9BtwoTThljhvUK',
+		7,
+		null,
+		'https://lh4.googleusercontent.com/6vcRxzUIU1Ak={size}',
+		'https://docs.google.com/forms/d/e/1FAIpQLSfExample/viewform',
+		null,
+		null,
+		null,
+		2,
+		null,
+		null,
+		[
+			[
+				'Genetics *so far* Quiz',
+				'https://lh4.googleusercontent.com/6vcRxzUIU1Ak={size}',
+				'https://docs.google.com/forms/d/e/1FAIpQLSfExample/viewform'
+			],
+			2
+		],
+		null,
+		1,
+		null,
+		'866428641939',
+		null,
+		null,
+		1,
+		null,
+		null,
+		null,
+		''
+	];
+	expect(
+		parseWorkAttachmentsPayload([
+			null,
+			[[form, null, [['866428641940', ['774782350284']], '866428641939']]]
+		])
+	).toEqual([
+		{
+			attachmentId: '866428641939',
+			title: 'Genetics *so far* Quiz',
+			url: 'https://docs.google.com/forms/d/e/1FAIpQLSfExample/viewform',
+			thumbnailUrl: 'https://lh4.googleusercontent.com/6vcRxzUIU1Ak=s400',
+			kind: 'form'
 		}
 	]);
 	// A record with no id in either slot is skipped, not guessed.

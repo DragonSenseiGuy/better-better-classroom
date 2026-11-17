@@ -107,7 +107,7 @@ def main():
     with open(path) as f:
         text = f.read()
     text = re.sub(r'^STATUS \d+\n', '', text)
-    rpc = 'pONvgf' if 'stream-' in path else 'Zj93ge'
+    rpc = 'pONvgf' if 'stream-' in path else 't51ITc' if 'postdetail-' in path else 'Zj93ge'
     payload = extract(rpc, text)
     if rpc == 'pONvgf':
         summarize_items(payload, limit)
