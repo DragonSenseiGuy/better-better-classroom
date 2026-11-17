@@ -110,7 +110,13 @@ async function doSync(options: { full?: boolean }) {
 		return;
 	}
 	const lastFullAt = getMeta<number>('lastFullSyncAt') ?? 0;
-	const full = options.full || Date.now() - lastFullAt > config.fullSyncHours * 3_600_000;
+	// A bumped shape version forces one full sync so rows stored by an older
+	// format (link shapes, material shapes) are rewritten without waiting
+	// for the periodic full sync.
+	const SHAPE_VERSION = 3;
+	const needsReshape = (getMeta<number>('syncShapeVersion') ?? 0) !== SHAPE_VERSION;
+	const full =
+		options.full || needsReshape || Date.now() - lastFullAt > config.fullSyncHours * 3_600_000;
 	const since = full ? 0 : Math.max(0, (getMeta<number>('lastSyncStartedAt') ?? 0) - 5 * 60_000);
 	const startedAt = Date.now();
 	setState({ status: 'running', startedAt, error: undefined, pending: 0 });
@@ -182,6 +188,7 @@ async function doSync(options: { full?: boolean }) {
 		if (errors.length === 0) {
 			setMeta('lastSyncStartedAt', startedAt);
 			if (full) setMeta('lastFullSyncAt', startedAt);
+			if (needsReshape) setMeta('syncShapeVersion', SHAPE_VERSION);
 		}
 		u.backoffMinutes = errors.some((e) => QUOTA.test(e))
 			? Math.min(30, (u.backoffMinutes || config.syncIntervalMinutes) * 2)

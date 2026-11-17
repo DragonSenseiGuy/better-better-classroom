@@ -1,4 +1,5 @@
 import { db } from './db';
+import { isDriveFolder } from '#lib/shared/attachments.ts';
 import type {
 	Attachment,
 	Author,
@@ -231,9 +232,11 @@ function keepHtml<T>(prev: T | undefined, fresh: T): T {
 		out.html = p.html;
 	// Attachment backfill costs one RPC per post, so its results survive
 	// record syncs the same way html does, while the post is unchanged. A
-	// fresh non-empty list (Apps Script always sends one) wins.
+	// fresh non-empty list (Apps Script always sends one) wins. Older syncs
+	// stored the auto-created Drive folder as a material; drop it from the
+	// preserved list so it disappears on the next write.
 	if (p.materials?.length && f.materials?.length === 0 && p.updatedAt === f.updatedAt)
-		out.materials = p.materials;
+		out.materials = p.materials.filter((m) => !isDriveFolder(m));
 	return out as T;
 }
 
