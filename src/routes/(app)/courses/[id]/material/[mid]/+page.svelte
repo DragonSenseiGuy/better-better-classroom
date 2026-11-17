@@ -5,14 +5,13 @@
 	import { postAttachments } from '#lib/api.ts';
 	import type { Attachment } from '#lib/shared/types.ts';
 	import { topicById } from '#lib/db/queries.ts';
-	import { Button } from '#lib/components/ui/button/index.js';
+	import { Badge } from '#lib/components/ui/badge/index.js';
 	import Attachments from '#lib/components/attachments.svelte';
 	import ClassComments from '#lib/components/class-comments.svelte';
 	import RichText from '#lib/components/rich-text.svelte';
+	import PostHeader from '#lib/components/post-header.svelte';
 	import { formatRelative } from '#lib/format.ts';
-	import { displayName } from '#lib/course.ts';
-	import CourseDot from '#lib/components/course-dot.svelte';
-	import ExternalLinkIcon from '@lucide/svelte/icons/external-link';
+	import { MenuBook as MenuBookIcon } from '@material-symbols-svg/svelte/rounded/icons/menu-book';
 
 	const row = useLiveQuery({
 		query: (q) =>
@@ -24,7 +23,11 @@
 	});
 	const topicQuery = useLiveQuery({ query: (q) => topicById(q, row.data?.m.topicId) });
 	const m = $derived(row.data?.m);
-	const courseName = $derived(row.data ? displayName(row.data.c) : '');
+	const teacher = $derived(
+		row.data?.m.author?.name ??
+			row.data?.c.teachers.find((t) => t.userId === row.data?.m.creatorUserId)?.name ??
+			row.data?.c.teachers[0]?.name
+	);
 	// Session-only sync stores materials without attachment URLs; fetch them
 	// from the details RPC when this page opens (one call per post).
 	const limited = $derived(page.data.snapshot.source !== 'apps-script');
@@ -56,44 +59,36 @@
 </script>
 
 {#if m}
-	<div class="flex flex-wrap items-start justify-between gap-4">
-		<div class="min-w-0">
-			<a
-				href={`/courses/${m.courseId}`}
-				class="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-			>
-				<CourseDot id={m.courseId} />{courseName}
-			</a>
-			<h1 class="mt-1 text-2xl font-semibold tracking-tight text-balance">{m.title}</h1>
-			<p class="mt-1 text-sm text-muted-foreground">
-				Material{#if topicQuery.data}
-					· {topicQuery.data.name}{/if} · posted {formatRelative(m.createdAt)}
-			</p>
+	<article class="max-w-4xl">
+		<PostHeader
+			courseId={m.courseId}
+			title={m.title}
+			byline={[teacher, formatRelative(m.createdAt)].filter(Boolean).join(' • ')}
+			alternateLink={m.alternateLink}
+		>
+			{#snippet icon()}<MenuBookIcon />{/snippet}
+			{#snippet meta()}
+				<span>Material</span>
+				{#if topicQuery.data}<Badge variant="outline">{topicQuery.data.name}</Badge>{/if}
+			{/snippet}
+		</PostHeader>
+		<div class="mt-6 sm:pl-16">
+			{#if m.description}
+				<RichText
+					text={m.description}
+					html={m.html}
+					class="max-w-[70ch] text-body-lg text-pretty break-words text-on-surface"
+				/>
+			{/if}
+			{#if attachmentItems.length || (limited && extraMaterials === null)}
+				<!-- Post attachments are not in the session-mode stream; fetch on open. -->
+				<div class="mt-6"><Attachments items={attachmentItems} /></div>
+			{/if}
 		</div>
-		{#if m.alternateLink}
-			<Button variant="outline" href={m.alternateLink} target="_blank" rel="noreferrer"
-				>Open in Classroom <ExternalLinkIcon data-icon="inline-end" /></Button
-			>
+		{#if m.courseId}
+			<div class="mt-8 max-w-lg sm:pl-16">
+				<ClassComments courseId={m.courseId} workId={m.id} />
+			</div>
 		{/if}
-	</div>
-	{#if m.description}
-		<RichText
-			text={m.description}
-			html={m.html}
-			class="mt-6 max-w-[70ch] text-sm text-pretty break-words"
-		/>
-	{/if}
-	{#if m.materials.length}
-		<h2 class="mt-8 text-base font-semibold tracking-tight">Attachments</h2>
-		<div class="mt-2 max-w-lg"><Attachments items={m.materials} /></div>
-	{:else if limited && extraMaterials !== null && extraMaterials.length > 0}
-		<!-- Post attachments are not in the session-mode stream; fetch on open. -->
-		<h2 class="mt-8 text-base font-semibold tracking-tight">Attachments</h2>
-		<div class="mt-2 max-w-lg"><Attachments items={attachmentItems} /></div>
-	{/if}
-	{#if m.courseId}
-		<div class="mt-8 max-w-lg">
-			<ClassComments courseId={m.courseId} workId={m.id} />
-		</div>
-	{/if}
+	</article>
 {/if}

@@ -9,8 +9,8 @@
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as Empty from '#lib/components/ui/empty/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
-	import ArchiveIcon from '@lucide/svelte/icons/archive';
-	import EyeIcon from '@lucide/svelte/icons/eye';
+	import { Archive as ArchiveIcon } from '@material-symbols-svg/svelte/rounded/icons/archive';
+	import { Visibility as EyeIcon } from '@material-symbols-svg/svelte/rounded/icons/visibility';
 
 	const archivedQuery = useLiveQuery({ query: (q) => q.from({ c: courses }) });
 	const archived = $derived(archivedQuery.data.filter(isArchived).sort(byCourseOrder));

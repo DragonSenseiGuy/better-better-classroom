@@ -5,8 +5,8 @@
 	import { Button } from '#lib/components/ui/button/index.js';
 	import RichText from '#lib/components/rich-text.svelte';
 	import type { Comment } from '#lib/shared/types.ts';
-	import LoaderIcon from '@lucide/svelte/icons/loader-circle';
-	import Trash2Icon from '@lucide/svelte/icons/trash-2';
+	import { ProgressActivity as LoaderIcon } from '@material-symbols-svg/svelte/rounded/icons/progress-activity';
+	import { Delete as TrashIcon } from '@material-symbols-svg/svelte/rounded/icons/delete';
 
 	let { courseId, workId }: { courseId: string; workId: string } = $props();
 
@@ -82,7 +82,7 @@
 								disabled={removing === c.id}
 								onclick={() => removeComment(c.id)}
 							>
-								<Trash2Icon class="size-3.5" />
+								<TrashIcon class="size-3.5" />
 							</button>
 						{/if}
 					</span>

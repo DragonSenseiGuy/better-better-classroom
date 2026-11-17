@@ -13,9 +13,9 @@
 	import CourseDot from '#lib/components/course-dot.svelte';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
-	import CalendarDaysIcon from '@lucide/svelte/icons/calendar-days';
-	import ChevronLeftIcon from '@lucide/svelte/icons/chevron-left';
-	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
+	import { CalendarMonth as CalendarDaysIcon } from '@material-symbols-svg/svelte/rounded/icons/calendar-month';
+	import { ChevronLeft as ChevronLeftIcon } from '@material-symbols-svg/svelte/rounded/icons/chevron-left';
+	import { ChevronRight as ChevronRightIcon } from '@material-symbols-svg/svelte/rounded/icons/chevron-right';
 
 	const workQuery = useLiveQuery({ query: workWithContext });
 	const all = $derived(
