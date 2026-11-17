@@ -428,7 +428,7 @@ export function parseTokens(html: string): WebTokens {
 	return { at, fsid, bl, email };
 }
 
-async function callRpc(
+export async function callRpc(
 	jar: CookieJar,
 	authuser: number,
 	tokens: WebTokens,
@@ -1224,6 +1224,12 @@ export const parseStreamResponse = (text: string) =>
 const ENTRY_ANNOUNCEMENT = 3;
 const ENTRY_COURSEWORK = 2;
 const ENTRY_MATERIAL = 7;
+// Coursework carrying the viewer's submission context: same body triple
+// (PostItem, schedule, folder) as wrapper 2, one slot deeper
+// (`[5, null, null, [PostItem, schedule, …]]`). Seen on course streams and
+// on the to-do pages' per-course work queries; the schedule node carries
+// due date, assigned time and max points exactly as wrapper 2's does.
+const ENTRY_COURSEWORK_STATE = 5;
 
 // Three buckets, probe-mapped against live traffic (see the session-probe
 // findings): announcements, coursework, and materials. Coursework is
@@ -1269,6 +1275,7 @@ export function parsePostMeta(
 	const createdAt = asMsTimestamp(rawTimestamp);
 	if (wrapper === ENTRY_ANNOUNCEMENT) return { kind: 'announcement', title, createdAt };
 	if (wrapper === ENTRY_COURSEWORK && title) return { kind: 'courseWork', title, createdAt };
+	if (wrapper === ENTRY_COURSEWORK_STATE && title) return { kind: 'courseWork', title, createdAt };
 	if (wrapper === ENTRY_MATERIAL && title) return { kind: 'material', title, createdAt };
 	// Fallback is deliberately announcement so consumers never branch on
 	// undefined — but it misfiles untitled wrapper-2 entries and unknown
@@ -1291,11 +1298,18 @@ export function parseStreamPayload(payload: Json): StreamPage {
 		const wrapper = Array.isArray(raw) ? raw[0] : undefined;
 		// Coursework carries its schedule and Drive-folder nodes as siblings
 		// of the PostItem inside the entry body; announcements and materials
-		// have neither.
+		// have neither. Wrapper 5 (coursework with the viewer's submission
+		// context) holds the same triple one slot deeper.
+		const bodyAt =
+			wrapper === ENTRY_COURSEWORK && Array.isArray(raw)
+				? raw[1]
+				: wrapper === ENTRY_COURSEWORK_STATE && Array.isArray(raw)
+					? raw[3]
+					: undefined;
 		let schedule: { dueAt?: number; assignedAt?: number; maxPoints?: number } | undefined;
 		let folder: { label?: string; folderUrl?: string } | undefined;
-		if (wrapper === ENTRY_COURSEWORK && Array.isArray(raw) && Array.isArray(raw[1])) {
-			const body = decode(raw[1], WorkBody);
+		if (Array.isArray(bodyAt)) {
+			const body = decode(bodyAt, WorkBody);
 			schedule = body?.schedule;
 			folder = body?.folder;
 		}

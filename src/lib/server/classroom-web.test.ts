@@ -111,6 +111,31 @@ const assignment = (
 	return [2, [postItem, extra.schedule ?? null, extra.folder ?? null]];
 };
 
+// Wrapper-5 coursework: the same body triple one slot deeper, carrying the
+// viewer's submission context (seen on course streams and to-do queries).
+const statefulAssignment = (
+	id: string,
+	courseId: string,
+	text: string,
+	html: string,
+	extra: { schedule?: unknown[]; topicId?: string } = {}
+) => {
+	const postItem: unknown[] = [
+		[id, [courseId]],
+		1784283111869,
+		null,
+		null,
+		['638776461164'],
+		'Title',
+		null,
+		null,
+		2,
+		html ? [[null, null, null, null, null, null, ['edu.rt', text, null, null, [null, html]]]] : null
+	];
+	if (extra.topicId) postItem[14] = [[extra.topicId, [courseId]]];
+	return [5, null, null, [postItem, extra.schedule ?? null, [1, []]]];
+};
+
 // Materials arrive as wrapper-7 posts: titled PostItem five slots deep, no
 // schedule or folder nodes, and usually no rich-text body.
 const material = (id: string, courseId: string, topicId?: string) => {
@@ -268,6 +293,38 @@ test('coursework schedule, folder and topic come from the entry body', () => {
 			maxPoints: 5,
 			topicId: 'topic2',
 			driveFolderUrl: 'https://drive.google.com/drive/folders/abc'
+		}
+	]);
+});
+
+test('wrapper-5 coursework carries schedule and topic like wrapper-2', () => {
+	const due = 1793419140000;
+	expect(
+		parseStreamResponse(
+			envelope([
+				'hrsi.qr',
+				[false],
+				[
+					statefulAssignment('6', '9', 'Work', '<div>Work</div>', {
+						schedule: [due, 1784283111869, false, 40],
+						topicId: 'topic3'
+					})
+				]
+			])
+		).items
+	).toEqual([
+		{
+			id: '6',
+			courseId: '9',
+			text: 'Work',
+			html: '<div>Work</div>',
+			creatorId: '638776461164',
+			kind: 'courseWork',
+			title: 'Title',
+			createdAt: 1784283111869,
+			dueAt: due,
+			maxPoints: 40,
+			topicId: 'topic3'
 		}
 	]);
 });
