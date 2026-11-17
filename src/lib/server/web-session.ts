@@ -11,6 +11,7 @@
 // and never touch the cache, rotation state, or profile store.
 
 import {
+	RateLimitedError,
 	SessionError,
 	fetchCourseList,
 	fetchCourseMembers,
@@ -42,6 +43,51 @@ import type { RawTeacher } from './providers';
 
 const TOKEN_TTL = 20 * 60_000;
 const PROFILE_BATCH = 25;
+const BACKOFF_BASE_SECONDS = 60;
+const BACKOFF_MAX_SECONDS = 900;
+
+/**
+ * Backoff length after a 429: exponential in consecutive hits (60s, 120s, …,
+ * capped at 15 minutes), never shorter than the server's Retry-After, with
+ * ±20% jitter so parallel sessions don't retry in lockstep.
+ */
+export function nextBackoffSeconds(count: number, retryAfter?: number): number {
+	const exponential = Math.min(BACKOFF_BASE_SECONDS * 2 ** count, BACKOFF_MAX_SECONDS);
+	return Math.round(Math.max(exponential, retryAfter ?? 0) * (0.8 + 0.4 * Math.random()));
+}
+
+/** Human-shaped pause before an outbound call, so bursts don't look scripted. */
+const jitterDelay = () => new Promise<void>((r) => setTimeout(r, 50 + Math.random() * 200));
+
+/**
+ * Session-wide rate-limit gate around every web fetch below. While a backoff
+ * is active it fails fast with a "rate limit" message (which the sync's
+ * quota classification and retry windows already understand) instead of
+ * hammering Google; a 429 records an exponential backoff with jitter, and
+ * any successful call resets the streak.
+ */
+export async function webCall<T>(call: () => Promise<T>): Promise<T> {
+	const state = getKeepAlive();
+	if (Date.now() < (state.backoffUntil ?? 0)) {
+		throw new RateLimitedError(Math.ceil(((state.backoffUntil ?? 0) - Date.now()) / 1000));
+	}
+	try {
+		const result = await call();
+		if (state.backoffCount) saveKeepAlive({ ...getKeepAlive(), backoffCount: 0 });
+		return result;
+	} catch (err) {
+		if (err instanceof RateLimitedError) {
+			const seconds = nextBackoffSeconds(state.backoffCount ?? 0, err.retryAfterSeconds);
+			saveKeepAlive({
+				...getKeepAlive(),
+				backoffUntil: Date.now() + seconds * 1000,
+				backoffCount: (state.backoffCount ?? 0) + 1
+			});
+			console.log(`classroom session: rate limited, backing off ${seconds}s`);
+		}
+		throw err;
+	}
+}
 
 /** Single coercion from a stored profile to the provider teacher shape. */
 export const toRawTeacher = (id: string, p?: Author): RawTeacher => ({
@@ -105,6 +151,7 @@ export function sessionJar(session: WebSession): CookieJar {
 			savedAt: session.savedAt,
 			jar: {
 				cookie: session.cookie,
+				browser: session.browser,
 				onChange: (cookie) => saveWebSession({ ...session, cookie })
 			}
 		};
@@ -128,7 +175,7 @@ export async function sessionTokensWithHtml(
 		return { tokens: l.cached.tokens, html: l.cached.html };
 	}
 	await ensureRotated(session);
-	const { html } = await fetchHomeHtml(sessionJar(session), session.authuser);
+	const { html } = await webCall(() => fetchHomeHtml(sessionJar(session), session.authuser));
 	const tokens = parseTokens(html);
 	saveKeepAlive({ ...getKeepAlive(), refreshedAt: Date.now() });
 	l.cached = { key, tokens, html, at: Date.now() };
@@ -148,7 +195,7 @@ export async function sessionTokens(session: WebSession, fresh = false): Promise
  */
 export async function sessionCourseList(session: WebSession) {
 	const tokens = await sessionTokens(session);
-	return fetchCourseList(sessionJar(session), session.authuser, tokens);
+	return webCall(() => fetchCourseList(sessionJar(session), session.authuser, tokens));
 }
 
 export function ensureRotated(session: WebSession): Promise<void> {
@@ -211,7 +258,8 @@ export async function ensureProfiles(
 	const jar = sessionJar(session);
 	for (let i = 0; i < missing.length; i += PROFILE_BATCH) {
 		const batch = missing.slice(i, i + PROFILE_BATCH);
-		const found = await fetchProfiles(jar, session.authuser, tokens, batch);
+		if (i > 0) await jitterDelay();
+		const found = await webCall(() => fetchProfiles(jar, session.authuser, tokens, batch));
 		for (const p of found) profiles[p.id] = { name: p.name, email: p.email, photoUrl: p.photoUrl };
 		for (const id of batch) profiles[id] ??= {};
 		void warmAvatars(found.map((p) => p.photoUrl));
@@ -240,13 +288,8 @@ export async function* iterateCourseStream(
 	for (let page = 0; page < maxPages; page++) {
 		let result: StreamPage;
 		try {
-			result = await fetchStreamPage(
-				sessionJar(session),
-				session.authuser,
-				tokens,
-				courseId,
-				pageSize,
-				token
+			result = await webCall(() =>
+				fetchStreamPage(sessionJar(session), session.authuser, tokens, courseId, pageSize, token)
 			);
 		} catch (err) {
 			if (!(err instanceof SessionError) || refreshed) throw err;
@@ -274,7 +317,9 @@ export async function fetchCoursePeople(
 	students: (RawTeacher & { name: string })[];
 }> {
 	const tokens = await sessionTokens(session);
-	const members = await fetchCourseMembers(sessionJar(session), session.authuser, tokens, courseId);
+	const members = await webCall(() =>
+		fetchCourseMembers(sessionJar(session), session.authuser, tokens, courseId)
+	);
 	const profiles = await ensureProfiles(session, [...members.teachers, ...members.students]);
 	return {
 		teachers: namedTeachers(members.teachers, profiles),
@@ -303,7 +348,8 @@ export async function fetchManyCoursePeople(
 	const rosters: RosterResult[] = await Promise.all(
 		courseIds.map(async (id): Promise<RosterResult> => {
 			try {
-				const members = await fetchCourseMembers(jar, session.authuser, tokens, id);
+				await jitterDelay();
+				const members = await webCall(() => fetchCourseMembers(jar, session.authuser, tokens, id));
 				return { ok: true, id, members };
 			} catch (err) {
 				return { ok: false, id, error: err instanceof Error ? err.message : String(err) };

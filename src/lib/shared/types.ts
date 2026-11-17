@@ -91,7 +91,15 @@ export type RichStatus = {
 	sessionSavedAt?: number;
 };
 
-export type KeepAlive = { rotatedAt?: number; refreshedAt?: number; nextRotateAt?: number };
+export type KeepAlive = {
+	rotatedAt?: number;
+	refreshedAt?: number;
+	nextRotateAt?: number;
+	/** Until when the web session backs off after a 429; 0/absent = clear. */
+	backoffUntil?: number;
+	/** Consecutive 429s, for exponential backoff; reset on any successful call. */
+	backoffCount?: number;
+};
 
 export type Comment = {
 	id: string;
