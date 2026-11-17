@@ -29,6 +29,7 @@ import {
 	encodeCourseId,
 	fetchSubmissions,
 	fetchTopics,
+	pinDriveAccount,
 	writeSubmissionState,
 	type StreamItem
 } from './classroom-web';
@@ -61,8 +62,13 @@ import type {
 	RawTeacher
 } from './providers';
 
-const courseUrl = (courseId: string) =>
-	`https://classroom.google.com/c/${encodeCourseId(courseId)}`;
+// The /u/<authuser>/ segment pins the link to the account the session was
+// captured from. Without it Classroom resolves the browser's default Google
+// account; when that one isn't in the course the page spins forever instead
+// of erroring. The RPC paths below already use the same segment, and it
+// works there.
+const courseUrl = (authuser: number, courseId: string) =>
+	`https://classroom.google.com/u/${authuser}/c/${encodeCourseId(courseId)}`;
 
 const TITLE_FALLBACK_LENGTH = 120;
 
@@ -107,7 +113,7 @@ async function overview(since: number): Promise<RawOverview> {
 		room: d.room,
 		ownerId: d.ownerId,
 		courseState: d.courseState ?? 'ACTIVE',
-		alternateLink: courseUrl(d.id),
+		alternateLink: courseUrl(session.authuser, d.id),
 		calendarId: d.calendarId,
 		creationTime: d.creationTime,
 		updateTime: d.updateTime,
@@ -130,14 +136,14 @@ async function overview(since: number): Promise<RawOverview> {
 	};
 }
 
-function postBase(courseId: string, item: StreamItem, path: string) {
+function postBase(courseId: string, item: StreamItem, path: string, authuser: number) {
 	// The stream exposes creation time only; creationTime is the honest
 	// field. Edits to existing posts surface on full syncs, not incremental
 	// filters.
 	return {
 		id: item.id,
 		materials: [] as RawAttachment[],
-		alternateLink: `${courseUrl(courseId)}/${path}`,
+		alternateLink: `${courseUrl(authuser, courseId)}/${path}`,
 		creationTime: item.createdAt ? new Date(item.createdAt).toISOString() : undefined,
 		creatorUserId: item.creatorId
 	};
@@ -194,10 +200,15 @@ async function courseContent(
 			// attachments are referenced by id and need another RPC.
 			if (item.kind === 'courseWork') {
 				courseWork.push({
-					...postBase(courseId, item, `a/${item.id}/details`),
+					...postBase(courseId, item, `a/${item.id}/details`, session.authuser),
 					...(item.driveFolderUrl
 						? {
-								materials: [{ type: 'drive', url: item.driveFolderUrl } satisfies RawAttachment]
+								materials: [
+									{
+										type: 'drive',
+										url: pinDriveAccount(item.driveFolderUrl, session.authuser)
+									} satisfies RawAttachment
+								]
 							}
 						: {}),
 					title: postTitle(item),
@@ -210,7 +221,7 @@ async function courseContent(
 				});
 			} else if (item.kind === 'material') {
 				materials.push({
-					...postBase(courseId, item, `m/${item.id}`),
+					...postBase(courseId, item, `m/${item.id}`, session.authuser),
 					title: postTitle(item),
 					description: item.text,
 					topicId: item.topicId
@@ -218,7 +229,11 @@ async function courseContent(
 			}
 			// Announcements are the default bucket: the classifier only
 			// returns courseWork or material on a positive wrapper signal.
-			else announcements.push({ ...postBase(courseId, item, `p/${item.id}`), text: item.text });
+			else
+				announcements.push({
+					...postBase(courseId, item, `p/${item.id}`, session.authuser),
+					text: item.text
+				});
 		}
 	}
 	// Submissions come from the student-keyed Zj93ge query the to-do pages
@@ -249,7 +264,7 @@ async function courseContent(
 				state: r.state,
 				late: r.late,
 				assignedGrade: r.assignedGrade,
-				alternateLink: `${courseUrl(courseId)}/a/${r.workId}/details`,
+				alternateLink: `${courseUrl(web.authuser, courseId)}/a/${r.workId}/details`,
 				courseWorkType: 'ASSIGNMENT',
 				...(r.updatedAt
 					? {

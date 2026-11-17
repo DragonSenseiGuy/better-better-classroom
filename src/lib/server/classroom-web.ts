@@ -383,6 +383,17 @@ export function parseCourseListPayload(payload: Json): WebCourseListItem[] {
 export const encodeCourseId = (courseId: string) => Buffer.from(courseId).toString('base64');
 
 /**
+ * Pins a drive.google.com URL to the session's account slot, mirroring how
+ * the RPC paths above address `/u/<authuser>/`. A stream-captured link opened
+ * without the segment resolves the browser's default Google account; when
+ * that one can't see the item, Drive serves its 404/no-access page. Covers
+ * both URL shapes (`/drive/folders/…`, `/file/d/…`); already-pinned URLs pass
+ * through unchanged.
+ */
+export const pinDriveAccount = (url: string, authuser: number) =>
+	url.replace(/^(https:\/\/drive\.google\.com\/[^/]+\/)(?!u\/\d)/, `$1u/${authuser}/`);
+
+/**
  * Fetches the signed-in Classroom home page and returns its HTML. The page
  * embeds the course list (AF_initDataCallback payloads), so a cookie-only
  * record source can discover courses without a separate list RPC.

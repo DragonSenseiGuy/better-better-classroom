@@ -15,7 +15,8 @@ import {
 	parseSubmissionsPayload,
 	parseTopicsPayload,
 	parseCommentsPayload,
-	parseWorkAttachmentsPayload
+	parseWorkAttachmentsPayload,
+	pinDriveAccount
 } from './classroom-web.ts';
 import { parseCoursesHtml, describeHomeHtml } from './course-discovery.ts';
 import type { Json } from './classroom/proto.ts';
@@ -165,6 +166,22 @@ const envelope = (payload: unknown) => {
 
 test('encodes course ids the way Classroom URLs do', () => {
 	expect(encodeCourseId('869476118207')).toBe('ODY5NDc2MTE4MjA3');
+});
+
+test('pins drive links to the session account slot without double-pinning', () => {
+	expect(pinDriveAccount('https://drive.google.com/drive/folders/abc', 1)).toBe(
+		'https://drive.google.com/drive/u/1/folders/abc'
+	);
+	// Already-pinned URLs (a resync re-reading its own rows) pass through.
+	expect(pinDriveAccount('https://drive.google.com/drive/u/2/folders/abc', 0)).toBe(
+		'https://drive.google.com/drive/u/2/folders/abc'
+	);
+	expect(pinDriveAccount('https://drive.google.com/file/d/abc/view', 3)).toBe(
+		'https://drive.google.com/file/u/3/d/abc/view'
+	);
+	expect(pinDriveAccount('https://example.com/drive/folders/abc', 1)).toBe(
+		'https://example.com/drive/folders/abc'
+	);
 });
 
 test('builds first and continuation page args', () => {

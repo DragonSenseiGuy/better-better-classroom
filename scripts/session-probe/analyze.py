@@ -58,6 +58,11 @@ def classify(v):
             return f'id-str[{len(v)}d]'
         if v.startswith(('http://', 'https://', '//')):
             host = v.split('/')[2] if '//' in v else ''
+            # Query parameter NAMES only, never values, so a capture can
+            # answer "does this URL carry resourcekey?" without leaking it.
+            if '?' in v:
+                names = sorted(re.findall(r'[?&]([^?&=]+)=', v))
+                return f'url[{host}]?{"&".join(names)}'
             return f'url[{host}]'
         if v == 'edu.rt':
             return 'edu.rt-marker'

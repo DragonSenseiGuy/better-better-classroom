@@ -43,8 +43,14 @@
 					{:else}
 						<Item.Media variant="icon"><Icon /></Item.Media>
 					{/if}
-					<Item.Content>
-						<Item.Title class="line-clamp-1">{a.title || a.url}</Item.Title>
+					<Item.Content class="min-w-0">
+						<!-- A title-less attachment falls back to its URL, one unbreakable
+						     token: without min-w-0 the flex box refuses to shrink below
+						     it and the card overflows its grid column. block overrides the
+						     base flex display, which defeats line clamping, and w-auto
+						     overrides the base w-fit, whose floor is the nowrap text's
+						     min-content width — the full URL. -->
+						<Item.Title class="block w-auto truncate">{a.title || a.url}</Item.Title>
 						<Item.Description>{labelFor(a.type)}</Item.Description>
 					</Item.Content>
 					<Item.Actions class="text-muted-foreground"
