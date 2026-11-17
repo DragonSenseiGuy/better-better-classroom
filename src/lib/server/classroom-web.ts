@@ -236,10 +236,16 @@ export async function rotateSession(jar: CookieJar): Promise<Rotation> {
 		if (/ServiceLogin|\/v3\/signin/.test(to))
 			throw new SessionError('Google asked for a sign-in when rotating the device cookies.');
 	}
+	const text = await res.text();
+	// Google rate-limits rotation with an anti-abuse cooldown whose body
+	// names the next interval ("identity.hfcr"). Honoring it beats failing
+	// the sync: the data RPCs usually still work while rotation backs off.
+	const cooldown = text.match(/"identity\.hfcr",\s*(\d+)/);
+	if (!res.ok && cooldown)
+		return { rotated: false, nextSeconds: Math.max(60, Number(cooldown[1])) };
 	if (res.status === 429) return { rotated: false, nextSeconds: 600 };
 	if (!res.ok) throw new Error(`RotateCookies responded ${res.status}`);
-	const text = await res.text();
-	const next = Number(text.match(/"identity\.hfcr",\s*(\d+)/)?.[1] ?? 600);
+	const next = Number(cooldown?.[1] ?? 600);
 	return { rotated: jar.cookie !== before, nextSeconds: Math.max(60, next) };
 }
 

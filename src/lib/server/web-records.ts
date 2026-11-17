@@ -29,7 +29,6 @@ import {
 	encodeCourseId,
 	fetchSubmissions,
 	fetchTopics,
-	pinDriveAccount,
 	writeSubmissionState,
 	type StreamItem
 } from './classroom-web';
@@ -62,13 +61,13 @@ import type {
 	RawTeacher
 } from './providers';
 
-// The /u/<authuser>/ segment pins the link to the account the session was
-// captured from. Without it Classroom resolves the browser's default Google
-// account; when that one isn't in the course the page spins forever instead
-// of erroring. The RPC paths below already use the same segment, and it
-// works there.
-const courseUrl = (authuser: number, courseId: string) =>
-	`https://classroom.google.com/u/${authuser}/c/${encodeCourseId(courseId)}`;
+// User-facing links copy the format Classroom itself produces for
+// alternateLink: both ids base64 and no /u/N account pin, so the browser's
+// own account resolves them. A pinned /u/N or a raw work id sends the SPA
+// into an endless load. RPC referers in classroom-web.ts keep the pinned
+// form, which the RPC backend accepts.
+const postUrl = (courseId: string, kind: string, id: string, suffix = '') =>
+	`https://classroom.google.com/c/${encodeCourseId(courseId)}/${kind}/${encodeCourseId(id)}${suffix}`;
 
 const TITLE_FALLBACK_LENGTH = 120;
 
@@ -113,7 +112,7 @@ async function overview(since: number): Promise<RawOverview> {
 		room: d.room,
 		ownerId: d.ownerId,
 		courseState: d.courseState ?? 'ACTIVE',
-		alternateLink: courseUrl(session.authuser, d.id),
+		alternateLink: `https://classroom.google.com/c/${encodeCourseId(d.id)}`,
 		calendarId: d.calendarId,
 		creationTime: d.creationTime,
 		updateTime: d.updateTime,
@@ -136,14 +135,14 @@ async function overview(since: number): Promise<RawOverview> {
 	};
 }
 
-function postBase(courseId: string, item: StreamItem, path: string, authuser: number) {
+function postBase(courseId: string, item: StreamItem, kind: string, suffix = '') {
 	// The stream exposes creation time only; creationTime is the honest
 	// field. Edits to existing posts surface on full syncs, not incremental
 	// filters.
 	return {
 		id: item.id,
 		materials: [] as RawAttachment[],
-		alternateLink: `${courseUrl(authuser, courseId)}/${path}`,
+		alternateLink: postUrl(courseId, kind, item.id, suffix),
 		creationTime: item.createdAt ? new Date(item.createdAt).toISOString() : undefined,
 		creatorUserId: item.creatorId
 	};
@@ -196,22 +195,12 @@ async function courseContent(
 			// coursework carries due date, points and a topic reference;
 			// materials are wrapper-7 posts with titles but no schedule node.
 			// Both lack per-item attachment URLs in the stream — coursework
-			// exposes only its auto-created Drive folder, and material
-			// attachments are referenced by id and need another RPC.
+			// exposes only its auto-created Drive folder (which Classroom's
+			// own UI does not show as a material, so we drop it here) and
+			// material attachments are referenced by id and need another RPC.
 			if (item.kind === 'courseWork') {
 				courseWork.push({
-					...postBase(courseId, item, `a/${item.id}/details`, session.authuser),
-					...(item.driveFolderUrl
-						? {
-								materials: [
-									{
-										type: 'drive',
-										title: 'Class Drive folder',
-										url: pinDriveAccount(item.driveFolderUrl, session.authuser)
-									} satisfies RawAttachment
-								]
-							}
-						: {}),
+					...postBase(courseId, item, 'a', '/details'),
 					title: postTitle(item),
 					description: item.text,
 					state: 'PUBLISHED',
@@ -222,7 +211,7 @@ async function courseContent(
 				});
 			} else if (item.kind === 'material') {
 				materials.push({
-					...postBase(courseId, item, `m/${item.id}`, session.authuser),
+					...postBase(courseId, item, 'm'),
 					title: postTitle(item),
 					description: item.text,
 					topicId: item.topicId
@@ -232,7 +221,7 @@ async function courseContent(
 			// returns courseWork or material on a positive wrapper signal.
 			else
 				announcements.push({
-					...postBase(courseId, item, `p/${item.id}`, session.authuser),
+					...postBase(courseId, item, 'p'),
 					text: item.text
 				});
 		}
@@ -265,7 +254,7 @@ async function courseContent(
 				state: r.state,
 				late: r.late,
 				assignedGrade: r.assignedGrade,
-				alternateLink: `${courseUrl(web.authuser, courseId)}/a/${r.workId}/details`,
+				alternateLink: postUrl(courseId, 'a', r.workId, '/details'),
 				courseWorkType: 'ASSIGNMENT',
 				...(r.updatedAt
 					? {

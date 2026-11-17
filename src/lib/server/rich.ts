@@ -25,7 +25,7 @@ import {
 	withWebStudent
 } from './web-session';
 import { errorMessage } from './http';
-import { hasRealMaterials, isDriveFolder } from '#lib/shared/attachments.ts';
+import { hasRealMaterials } from '#lib/shared/attachments.ts';
 import { isVisible } from '#lib/course.ts';
 import {
 	findPost,
@@ -247,12 +247,10 @@ async function backfillPostAttachments(
 		tried[row.id] = Date.now();
 		try {
 			const found = await fetchWorkAttachments(jar, session.authuser, tokens, row.id, row.courseId);
-			// Keep the stream's Drive folder chip ahead of the details
-			// attachments; Classroom shows the folder on the post too.
-			const folders = row.materials.filter(isDriveFolder);
-			const change = setPostExtras(table, row, {
-				materials: [...folders, ...found.map(toAttachment)]
-			});
+			// Write the details attachments verbatim: older rows may still
+			// carry the dropped stream folder chip, and this overwrite
+			// removes it alongside the fetch.
+			const change = setPostExtras(table, row, { materials: found.map(toAttachment) });
 			if (!change) continue;
 			(grouped[table] ??= []).push(change);
 			updated++;
